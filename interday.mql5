@@ -1,0 +1,243 @@
+//+------------------------------------------------------------------+
+//|                                   VolatilityBreakoutStrategy.mq5 |
+//|                                                                  |
+//|  Volatility breakout using the 9:30am RTH open price, daily ATR |
+//|  No trades outside 9:30-16:00. Supports both long and short.    |
+//+------------------------------------------------------------------+
+#property copyright "Copyright 2025"
+#property link      ""
+#property version   "1.00"
+#property strict
+
+//--- Input parameters
+input double LotSizeLong = 0.1;       // Lot size for long entries
+input double LotSizeShort = 0.1;      // Lot size for short entries
+input int    ATRPeriod = 5;           // Daily ATR period
+input double ATRMultiplier = 0.3;     // ATR multiplier for breakout levels
+input int    MagicNumberLong = 12345; // Magic number for long trades
+input int    MagicNumberShort = 12346;// Magic number for short trades
+input int    TradeStartHour = 15;      // Trading start hour (broker time)
+input int    TradeStartMinute = 30;    // Trading start minute
+input int    TradeEndHour = 22;        // Trading end hour (broker time)
+input int    TradeEndMinute = 0;       // Trading end minute
+input double RiskRewardRatio = 2.0;    // Risk:Reward ratio for take profit
+
+//--- Global variables
+int atrHandle;
+double rthOpen = 0.0;
+datetime lastOpenDate = 0;
+double dailyATRBuffer[];
+
+//+------------------------------------------------------------------+
+//| Expert initialization function                                   |
+//+------------------------------------------------------------------+
+int OnInit()
+{
+   // Create daily ATR indicator handle
+   atrHandle = iATR(NULL, PERIOD_D1, ATRPeriod);
+   
+   if(atrHandle == INVALID_HANDLE)
+   {
+      Print("Error creating ATR indicator: ", GetLastError());
+      return(INIT_FAILED);
+   }
+   
+   ArraySetAsSeries(dailyATRBuffer, true);
+   
+   Print("VolatilityBreakoutStrategy initialized successfully");
+   return(INIT_SUCCEEDED);
+}
+
+//+------------------------------------------------------------------+
+//| Expert deinitialization function                                 |
+//+------------------------------------------------------------------+
+void OnDeinit(const int reason)
+{
+   if(atrHandle != INVALID_HANDLE)
+      IndicatorRelease(atrHandle);
+}
+
+//+------------------------------------------------------------------+
+//| Expert tick function                                             |
+//+------------------------------------------------------------------+
+void OnTick()
+{
+   // Check if new bar formed (calculate on bar close)
+   static datetime lastBarTime = 0;
+   datetime currentBarTime = iTime(NULL, PERIOD_CURRENT, 0);
+   
+   if(currentBarTime == lastBarTime)
+      return;
+   
+   lastBarTime = currentBarTime;
+   
+   // Ensure we have enough bars
+   if(Bars(NULL, PERIOD_CURRENT) < 10)
+      return;
+   
+   // Get current time
+   MqlDateTime timeStruct;
+   TimeToStruct(TimeCurrent(), timeStruct);
+   int currentTime = timeStruct.hour * 100 + timeStruct.min;
+   int startTime = TradeStartHour * 100 + TradeStartMinute;
+   int endTime = TradeEndHour * 100 + TradeEndMinute;
+   
+   // Only trade within specified hours
+   if(currentTime < startTime || currentTime >= endTime)
+   {
+      Print("Outside trading hours. Current: ", currentTime, " Range: ", startTime, "-", endTime);
+      return;
+   }
+   
+   datetime currentDate = iTime(NULL, PERIOD_D1, 0);
+   if(currentDate != lastOpenDate)
+   {
+      rthOpen = 0.0;
+      lastOpenDate = currentDate;
+   }
+   
+   // Capture RTH open price at start of trading session
+   if(rthOpen == 0.0 && currentTime >= startTime)
+   {
+      rthOpen = iOpen(NULL, PERIOD_CURRENT, 0);
+      Print("RTH Open captured at ", currentTime, ": ", rthOpen);
+   }
+   
+   if(rthOpen == 0.0)
+   {
+      Print("RTH Open is zero, skipping");
+      return;
+   }
+   
+   // Get daily ATR value
+   if(CopyBuffer(atrHandle, 0, 1, 1, dailyATRBuffer) <= 0)
+   {
+      Print("Error copying ATR buffer: ", GetLastError());
+      return;
+   }
+   
+   double atrValue = dailyATRBuffer[0];
+   
+   if(atrValue == 0.0)
+      return;
+   
+   // Define breakout levels
+   double longBreakoutLevel = rthOpen + ATRMultiplier * atrValue;
+   double shortBreakoutLevel = rthOpen - ATRMultiplier * atrValue;
+   
+   // Get current price
+   double currentClose = iClose(NULL, PERIOD_CURRENT, 0);
+   
+   // Check if we have open positions
+   bool hasLongPosition = HasPosition(POSITION_TYPE_BUY);
+   bool hasShortPosition = HasPosition(POSITION_TYPE_SELL);
+   
+   // Only enter if flat (no positions)
+   if(!hasLongPosition && !hasShortPosition)
+   {
+      // Long entry: price closes above long breakout level
+      if(currentClose > longBreakoutLevel)
+      {
+         Print("LONG SIGNAL: Close (", currentClose, ") > Long Level (", longBreakoutLevel, ")");
+         double stopDistance = currentClose - rthOpen;
+         double takeProfit = currentClose + (stopDistance * RiskRewardRatio);
+         OpenTrade(ORDER_TYPE_BUY, LotSizeLong, rthOpen, takeProfit, MagicNumberLong, "LongBreakout");
+      }
+      // Short entry: price closes below short breakout level
+      else if(currentClose < shortBreakoutLevel)
+      {
+         Print("SHORT SIGNAL: Close (", currentClose, ") < Short Level (", shortBreakoutLevel, ")");
+         double stopDistance = rthOpen - currentClose;
+         double takeProfit = currentClose - (stopDistance * RiskRewardRatio);
+         OpenTrade(ORDER_TYPE_SELL, LotSizeShort, rthOpen, takeProfit, MagicNumberShort, "ShortBreakout");
+      }
+   }
+}
+
+//+------------------------------------------------------------------+
+//| Check if position exists                                         |
+//+------------------------------------------------------------------+
+bool HasPosition(ENUM_POSITION_TYPE posType)
+{
+   for(int i = PositionsTotal() - 1; i >= 0; i--)
+   {
+      ulong ticket = PositionGetTicket(i);
+      if(ticket > 0)
+      {
+         if(PositionGetString(POSITION_SYMBOL) == _Symbol)
+         {
+            if(PositionGetInteger(POSITION_TYPE) == posType)
+               return true;
+         }
+      }
+   }
+   return false;
+}
+
+//+------------------------------------------------------------------+
+//| Open trade with stop loss and take profit                       |
+//+------------------------------------------------------------------+
+void OpenTrade(ENUM_ORDER_TYPE orderType, double lotSize, double stopLossPrice, double takeProfitPrice, int magicNumber, string comment)
+{
+   MqlTradeRequest request;
+   MqlTradeResult result;
+   ZeroMemory(request);
+   ZeroMemory(result);
+   
+   // Validate and normalize lot size
+   double minLot = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MIN);
+   double maxLot = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MAX);
+   double lotStep = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_STEP);
+   
+   if(lotSize < minLot)
+   {
+      Print("Lot size ", lotSize, " below minimum ", minLot, ". Adjusting to minimum.");
+      lotSize = minLot;
+   }
+   if(lotSize > maxLot)
+   {
+      Print("Lot size ", lotSize, " above maximum ", maxLot, ". Adjusting to maximum.");
+      lotSize = maxLot;
+   }
+   
+   lotSize = NormalizeDouble(lotSize, 2);
+   
+   double price = (orderType == ORDER_TYPE_BUY) ? SymbolInfoDouble(_Symbol, SYMBOL_ASK) : SymbolInfoDouble(_Symbol, SYMBOL_BID);
+   
+   // Get broker's filling mode
+   int filling = (int)SymbolInfoInteger(_Symbol, SYMBOL_FILLING_MODE);
+   ENUM_ORDER_TYPE_FILLING fillType = ORDER_FILLING_RETURN;
+   
+   if((filling & SYMBOL_FILLING_FOK) == SYMBOL_FILLING_FOK)
+      fillType = ORDER_FILLING_FOK;
+   else if((filling & SYMBOL_FILLING_IOC) == SYMBOL_FILLING_IOC)
+      fillType = ORDER_FILLING_IOC;
+   
+   request.action = TRADE_ACTION_DEAL;
+   request.symbol = _Symbol;
+   request.volume = lotSize;
+   request.type = orderType;
+   request.price = price;
+   request.sl = NormalizeDouble(stopLossPrice, _Digits);
+   request.tp = NormalizeDouble(takeProfitPrice, _Digits);
+   request.deviation = 50;
+   request.magic = magicNumber;
+   request.comment = comment;
+   request.type_filling = fillType;
+   
+   // Send order
+   if(!OrderSend(request, result))
+   {
+      Print("OrderSend failed: ", result.retcode, " - ", result.comment);
+   }
+   
+   if(result.retcode == TRADE_RETCODE_DONE || result.retcode == TRADE_RETCODE_PLACED)
+   {
+      Print("Trade opened successfully: ", comment, " at ", price, " SL: ", stopLossPrice, " TP: ", takeProfitPrice);
+   }
+   else
+   {
+      Print("Error opening trade: ", result.retcode, " - ", result.comment);
+   }
+}
+//+------------------------------------------------------------------+

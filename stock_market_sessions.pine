@@ -1,0 +1,151 @@
+//@version=6
+indicator('Stock Market Sessions', 'Stock Sessions', overlay=true, max_lines_count=200, max_boxes_count=200, max_labels_count=200, max_bars_back=1000, explicit_plot_zorder=true)
+
+import boitoki/AwesomeColor/9 as ac
+import boitoki/Utilities/11 as util
+
+///////////////
+// Groups
+///////////////
+g0                      = '// GENERAL //'
+g1_01                   = '// 🕘 PRE-MARKET SESSION //'
+g1_02                   = '// 🟢 REGULAR TRADING HOURS //'
+g1_03                   = '// 🌙 AFTER-HOURS SESSION //'
+g1_04                   = '// 🔄 EXTENDED HOURS //'
+g4                      = '// BOX //'
+g6                      = '// LABELS //'
+g5                      = '// OPENING RANGE //'
+g7                      = '// FIBONACCI LEVELS //'
+g8                      = '// OPTIONS //'
+g11                     = '// CANDLE //'
+g10                     = '// ALERTS VISUALISED //'
+g12                     = '// INFORMATION //'
+
+///////////////
+// Defined
+///////////////
+MAX_BARS                = 500
+
+option_yes              = 'Yes'
+option_no               = '× No'
+option_hide            = '× Hide'
+option_border_style1   = '────'
+option_border_style2   = '- - - - - -'
+option_border_style3   = '•••••••••'
+option_chart_1         = 'Bar color'
+option_chart_2         = 'Candles'
+option_opr_label1      = 'High・Low'
+option_opr_label2      = 'Buy・Sell'
+option_opr_label_none  = 'None'
+option_candle_color1   = 'Session color'
+option_candle_color2   = 'Red • Green'
+
+fmt_price              = '{0,number,#.##}'
+
+// Stock Market Sessions (default: NYSE)
+pre_market_hours      = '0400-0930:1234567'
+regular_hours         = '0930-1600:12345'  // NYSE Regular Trading Hours
+after_hours           = '1600-2000:12345'
+extended_hours        = '0400-2000:12345'  // Pre + Regular + After Hours
+
+// Color Schemes
+color_pre_market      = color.new(#2962FF, 0)       // Blue
+color_regular         = color.new(#00C853, 0)       // Green
+color_after_hours     = color.new(#FF6D00, 0)       // Orange
+color_extended        = color.new(#6200EA, 0)       // Deep Purple
+
+// Default session colors
+c_sess1_barcolor       = color.new(color_pre_market, 90)
+c_sess2_barcolor       = color.new(color_regular, 90)
+c_sess3_barcolor       = color.new(color_after_hours, 90)
+c_sess4_barcolor       = color.new(color_extended, 95)
+
+// Session inputs
+i_show                = input.bool(true, 'Show Sessions', group=g0)
+i_show_pre_market     = input.bool(true, 'Pre-Market (4:00-9:30 AM ET)', group=g1_01)
+i_show_regular        = input.bool(true, 'Regular Hours (9:30 AM-4:00 PM ET)', group=g1_02)
+i_show_after_hours    = input.bool(true, 'After-Hours (4:00-8:00 PM ET)', group=g1_03)
+i_show_extended       = input.bool(false, 'Extended Hours (4:00 AM-8:00 PM ET)', group=g1_04)
+
+// Session styling
+i_sess1_chart         = input.string(option_chart_1, 'Pre-Market', options=[option_chart_1, option_chart_2, option_no], group=g1_01)
+i_sess1_barcolor      = i_sess1_chart == option_chart_1
+i_sess1_plotcandle    = i_sess1_chart == option_chart_2
+
+i_sess2_chart         = input.string(option_chart_1, 'Regular Hours', options=[option_chart_1, option_chart_2, option_no], group=g1_02)
+i_sess2_barcolor      = i_sess2_chart == option_chart_1
+i_sess2_plotcandle    = i_sess2_chart == option_chart_2
+
+i_sess3_chart         = input.string(option_no, 'After-Hours', options=[option_chart_1, option_chart_2, option_no], group=g1_03)
+i_sess3_barcolor      = i_sess3_chart == option_chart_1
+i_sess3_plotcandle    = i_sess3_chart == option_chart_2
+
+i_sess4_chart         = input.string(option_no, 'Extended Hours', options=[option_chart_1, option_chart_2, option_no], group=g1_04)
+i_sess4_barcolor      = i_sess4_chart == option_chart_1
+i_sess4_plotcandle    = i_sess4_chart == option_chart_2
+
+// Determine current session
+is_pre_market     = time(timeframe.period, pre_market_hours)
+is_regular        = time(timeframe.period, regular_hours)
+is_after_hours    = time(timeframe.period, after_hours)
+is_extended       = time(timeframe.period, extended_hours)
+
+// Plot session backgrounds
+bgcolor(i_show_pre_market and is_pre_market ? color_pre_market : na, title="Pre-Market", offset=0, editable=false)
+bgcolor(i_show_regular and is_regular ? color_regular : na, title="Regular Hours", offset=0, editable=false)
+bgcolor(i_show_after_hours and is_after_hours ? color_after_hours : na, title="After-Hours", offset=0, editable=false)
+bgcolor(i_show_extended and is_extended ? color_extended : na, title="Extended Hours", offset=0, editable=false, transp=80)
+
+// Plot session boundaries
+plotshape(i_show and is_pre_market and not is_pre_market[1] ? low : na, title="Pre-Market Start", style=shape.triangleup, location=location.belowbar, color=color_pre_market, size=size.small)
+plotshape(i_show and is_regular and not is_regular[1] ? low : na, title="Regular Hours Start", style=shape.triangleup, location=location.belowbar, color=color_regular, size=size.small)
+plotshape(i_show and is_after_hours and not is_after_hours[1] ? low : na, title="After-Hours Start", style=shape.triangleup, location=location.belowbar, color=color_after_hours, size=size.small)
+
+// Add session labels
+var label pre_market_label = na
+var label regular_label = na
+var label after_hours_label = na
+
+if barstate.islast
+    label.delete(pre_market_label)
+    label.delete(regular_label)
+    label.delete(after_hours_label)
+    
+    if i_show_pre_market and is_pre_market
+        pre_market_label := label.new(bar_index, high, "PRE-MARKET", 
+                                    color=color_pre_market, textcolor=color.white, 
+                                    style=label.style_label_up, yloc=yloc.price, 
+                                    size=size.small)
+    
+    if i_show_regular and is_regular
+        regular_label := label.new(bar_index, high, "REGULAR HOURS", 
+                                 color=color_regular, textcolor=color.white, 
+                                 style=label.style_label_up, yloc=yloc.price, 
+                                 size=size.small)
+    
+    if i_show_after_hours and is_after_hours
+        after_hours_label := label.new(bar_index, high, "AFTER-HOURS", 
+                                     color=color_after_hours, textcolor=color.white, 
+                                     style=label.style_label_up, yloc=yloc.price, 
+                                     size=size.small)
+
+// Plot current session information
+var table info_table = table.new(position.top_right, 2, 4, border_width=1)
+if barstate.islast
+    table.cell(info_table, 0, 0, "Session", bgcolor=color.gray, text_color=color.white)
+    table.cell(info_table, 1, 0, "Status", bgcolor=color.gray, text_color=color.white)
+    
+    table.cell(info_table, 0, 1, "Pre-Market", bgcolor=color_pre_market, text_color=color.white)
+    table.cell(info_table, 1, 1, is_pre_market ? "Active" : "Inactive", 
+              bgcolor=is_pre_market ? color.green : color.red, 
+              text_color=color.white)
+    
+    table.cell(info_table, 0, 2, "Regular Hours", bgcolor=color_regular, text_color=color.white)
+    table.cell(info_table, 1, 2, is_regular ? "Active" : "Inactive", 
+              bgcolor=is_regular ? color.green : color.red, 
+              text_color=color.white)
+    
+    table.cell(info_table, 0, 3, "After-Hours", bgcolor=color_after_hours, text_color=color.white)
+    table.cell(info_table, 1, 3, is_after_hours ? "Active" : "Inactive", 
+              bgcolor=is_after_hours ? color.green : color.red, 
+              text_color=color.white)

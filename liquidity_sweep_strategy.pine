@@ -1,0 +1,405 @@
+//@version=5
+strategy(title="Liquidity Sweep Strategy", 
+         shorttitle="LIQ SWEEP", 
+         overlay=true, 
+         initial_capital=10000, 
+         default_qty_type=strategy.percent_of_equity, 
+         default_qty_value=10,
+         commission_type=strategy.commission.percent, 
+         commission_value=0.1,
+         slippage=2,
+         pyramiding=0,
+         calc_on_every_tick=false,
+         calc_on_order_fills=false,
+         process_orders_on_close=false)
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// STRATEGY RULES:
+// 1: Liquidity sweep (1hr, 4hr, session highs/lows)
+// 2: 5 confirmation candles (BOS, iFVG, SMT, 79% ext)
+// 3: Continuation confirmation (EQ or FVG) - or if step 2 happens during premarket/
+//    different session, wait for 5min manipulation
+// 4: 1 confirmation candle (BOS, iFVG, SMT, 79% ext) to enter
+// 5: Enter
+// 6: Target: previous draws on liquidity in our direction
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// INPUTS
+// ═══════════════════════════════════════════════════════════════════════════════
+// Timeframe Settings
+i_htf1 = input.timeframe("60", "Higher Timeframe 1", group="Timeframe Settings")
+i_htf2 = input.timeframe("240", "Higher Timeframe 2", group="Timeframe Settings")
+i_use_session_highs = input.bool(true, "Use Session Highs/Lows", group="Timeframe Settings")
+
+// Session Settings
+i_session = input.session("0930-1600", "Trading Session", group="Session Settings")
+i_premarket = input.session("0400-0930", "Premarket Session", group="Session Settings")
+i_timezone = input.string("America/New_York", "Timezone", group="Session Settings")
+
+// Liquidity Sweep Settings
+i_sweep_lookback = input.int(20, "Liquidity Sweep Lookback", minval=5, maxval=100, group="Liquidity Settings")
+i_sweep_buffer = input.float(0.1, "Sweep Buffer %", minval=0.01, maxval=1.0, step=0.01, group="Liquidity Settings")
+
+// Confirmation Settings
+i_conf_candles = input.int(5, "Confirmation Candles Required", minval=3, maxval=10, group="Confirmation Settings")
+i_entry_conf_candles = input.int(1, "Entry Confirmation Candles", minval=1, maxval=5, group="Confirmation Settings")
+i_fib_extension = input.float(0.79, "Fibonacci Extension Level", minval=0.5, maxval=1.0, step=0.01, group="Confirmation Settings")
+
+// FVG Settings
+i_fvg_threshold = input.float(0.0, "FVG Minimum Size (pips)", minval=0.0, group="FVG Settings")
+
+// Risk Management
+i_risk_reward = input.float(2.0, "Risk:Reward Ratio", minval=1.0, maxval=5.0, step=0.1, group="Risk Management")
+i_stop_loss_atr = input.float(1.5, "Stop Loss (ATR Multiplier)", minval=0.5, maxval=5.0, step=0.1, group="Risk Management")
+i_atr_length = input.int(14, "ATR Length", minval=5, maxval=50, group="Risk Management")
+i_close_eod = input.bool(true, "Close Position at End of Session", group="Risk Management")
+i_max_bars_in_trade = input.int(50, "Max Bars in Trade (0=disabled)", minval=0, maxval=200, group="Risk Management")
+
+// Visual Settings
+i_show_liquidity = input.bool(true, "Show Liquidity Levels", group="Visual Settings")
+i_show_fvg = input.bool(true, "Show Fair Value Gaps", group="Visual Settings")
+i_show_bos = input.bool(true, "Show Break of Structure", group="Visual Settings")
+
+// Colors
+color_bullish = input.color(color.new(color.green, 80), "Bullish Color", group="Colors")
+color_bearish = input.color(color.new(color.red, 80), "Bearish Color", group="Colors")
+color_liquidity = input.color(color.new(color.yellow, 50), "Liquidity Color", group="Colors")
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// GLOBAL VARIABLES
+// ═══════════════════════════════════════════════════════════════════════════════
+var float session_high = na
+var float session_low = na
+var float htf1_high = na
+var float htf1_low = na
+var float htf2_high = na
+var float htf2_low = na
+var int liquidity_sweep_bar = na
+var string sweep_direction = na  // "long" or "short"
+var int confirmation_count = 0
+var bool waiting_for_manipulation = false
+var bool continuation_confirmed = false
+var int entry_confirmation_count = 0
+var bool position_entered = false
+var float entry_price = na
+var float stop_loss = na
+var float take_profit = na
+var float last_liquidity_target = na
+var int trade_entry_bar = na
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// CALCULATIONS (must be done at global scope)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// ATR for stop loss calculation
+float atr = ta.atr(i_atr_length)
+
+// Check if in session
+bool in_session = not na(time(timeframe.period, i_session, i_timezone))
+bool in_premarket = not na(time(timeframe.period, i_premarket, i_timezone))
+
+// Get HTF data
+[float htf1_h, float htf1_l] = request.security(syminfo.tickerid, i_htf1, [high, low], lookahead=barmerge.lookahead_on)
+[float htf2_h, float htf2_l] = request.security(syminfo.tickerid, i_htf2, [high, low], lookahead=barmerge.lookahead_on)
+
+// Update session highs/lows
+if in_session
+    if na(session_high) or high > session_high
+        session_high := high
+    if na(session_low) or low < session_low
+        session_low := low
+else if not in_session and not in_premarket
+    session_high := na
+    session_low := na
+
+// Update HTF highs/lows
+if not na(htf1_h)
+    htf1_high := htf1_h
+if not na(htf1_l)
+    htf1_low := htf1_l
+if not na(htf2_h)
+    htf2_high := htf2_h
+if not na(htf2_l)
+    htf2_low := htf2_l
+
+// Function to detect liquidity sweep
+detect_liquidity_sweep() =>
+    bool sweep_detected = false
+    string direction = na
+    float swept_level = na
+    
+    // Get recent highs and lows
+    float recent_high = ta.highest(high, i_sweep_lookback)
+    float recent_low = ta.lowest(low, i_sweep_lookback)
+    
+    // Check for sweep of recent high (bearish sweep)
+    if high > recent_high[1] and close < recent_high[1] * (1 - i_sweep_buffer / 100)
+        sweep_detected := true
+        direction := "short"
+        swept_level := recent_high[1]
+    
+    // Check for sweep of recent low (bullish sweep)
+    if low < recent_low[1] and close > recent_low[1] * (1 + i_sweep_buffer / 100)
+        sweep_detected := true
+        direction := "long"
+        swept_level := recent_low[1]
+    
+    // Check HTF levels
+    if i_use_session_highs and not na(session_high)
+        if high > session_high and close < session_high * (1 - i_sweep_buffer / 100)
+            sweep_detected := true
+            direction := "short"
+            swept_level := session_high
+    
+    if i_use_session_highs and not na(session_low)
+        if low < session_low and close > session_low * (1 + i_sweep_buffer / 100)
+            sweep_detected := true
+            direction := "long"
+            swept_level := session_low
+    
+    [sweep_detected, direction, swept_level]
+
+// Function to detect Break of Structure (BOS)
+detect_bos(string direction) =>
+    bool bos = false
+    
+    if direction == "long"
+        // Bullish BOS: close above previous swing high
+        float prev_high = ta.highest(high[1], 5)
+        bos := close > prev_high
+    else if direction == "short"
+        // Bearish BOS: close below previous swing low
+        float prev_low = ta.lowest(low[1], 5)
+        bos := close < prev_low
+    
+    bos
+
+// Function to detect Inverse Fair Value Gap (iFVG)
+detect_ifvg(string direction) =>
+    bool ifvg = false
+    
+    if direction == "long"
+        // Bullish iFVG: gap between high[2] and low[0]
+        float gap = low - high[2]
+        ifvg := gap > i_fvg_threshold * syminfo.mintick
+    else if direction == "short"
+        // Bearish iFVG: gap between low[2] and high[0]
+        float gap = low[2] - high
+        ifvg := gap > i_fvg_threshold * syminfo.mintick
+    
+    ifvg
+
+// Function to check Fibonacci extension
+check_fib_extension(string direction, float sweep_level) =>
+    bool fib_ok = false
+    
+    if not na(sweep_level)
+        if direction == "long"
+            // Price should retrace to 79% level below sweep
+            float fib_level = sweep_level * (1 - i_fib_extension / 100)
+            fib_ok := low <= fib_level and close > fib_level
+        else if direction == "short"
+            // Price should retrace to 79% level above sweep
+            float fib_level = sweep_level * (1 + i_fib_extension / 100)
+            fib_ok := high >= fib_level and close < fib_level
+    
+    fib_ok
+
+// Function to check for continuation confirmation (EQ or FVG)
+check_continuation(string direction) =>
+    bool confirmed = false
+    
+    // Check for FVG
+    if detect_ifvg(direction)
+        confirmed := true
+    
+    // Check for equilibrium (50% retracement)
+    if direction == "long"
+        float range_size = high[1] - low[1]
+        float eq_level = low[1] + range_size * 0.5
+        if close >= eq_level
+            confirmed := true
+    else if direction == "short"
+        float range_size = high[1] - low[1]
+        float eq_level = high[1] - range_size * 0.5
+        if close <= eq_level
+            confirmed := true
+    
+    confirmed
+
+// Function to check confirmation criteria
+check_confirmation(string direction, float sweep_level) =>
+    bool confirmed = false
+    
+    // Check BOS
+    bool bos = detect_bos(direction)
+    
+    // Check iFVG
+    bool ifvg = detect_ifvg(direction)
+    
+    // Check Fibonacci extension
+    bool fib = check_fib_extension(direction, sweep_level)
+    
+    // At least 2 out of 3 should be true
+    int confirmation_score = (bos ? 1 : 0) + (ifvg ? 1 : 0) + (fib ? 1 : 0)
+    confirmed := confirmation_score >= 2
+    
+    confirmed
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// STRATEGY LOGIC
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// Step 1: Detect Liquidity Sweep (must be called at global scope)
+[bool sweep_detected, string sweep_dir, float swept_level] = detect_liquidity_sweep()
+
+// Close positions at end of session
+if i_close_eod and not in_session and in_session[1] and strategy.position_size != 0
+    strategy.close_all("End of Session")
+    entry_price := na
+    position_entered := false
+    trade_entry_bar := na
+
+// Close positions after max bars in trade
+if i_max_bars_in_trade > 0 and not na(trade_entry_bar) and strategy.position_size != 0
+    if bar_index - trade_entry_bar >= i_max_bars_in_trade
+        strategy.close_all("Max Bars Reached")
+        entry_price := na
+        position_entered := false
+        trade_entry_bar := na
+
+// Reset state on new session
+if in_session and not in_session[1]
+    liquidity_sweep_bar := na
+    sweep_direction := na
+    confirmation_count := 0
+    waiting_for_manipulation := false
+    continuation_confirmed := false
+    entry_confirmation_count := 0
+    if strategy.position_size == 0
+        position_entered := false
+        entry_price := na
+
+if sweep_detected and na(liquidity_sweep_bar)
+    liquidity_sweep_bar := bar_index
+    sweep_direction := sweep_dir
+    confirmation_count := 0
+    waiting_for_manipulation := in_premarket
+    continuation_confirmed := false
+    entry_confirmation_count := 0
+    last_liquidity_target := swept_level
+    
+    // Visual: Mark liquidity sweep
+    if i_show_liquidity
+        label.new(bar_index, sweep_dir == "long" ? low : high, 
+                 "LIQ SWEEP\n" + sweep_dir, 
+                 color=sweep_dir == "long" ? color_bullish : color_bearish,
+                 style=sweep_dir == "long" ? label.style_label_up : label.style_label_down,
+                 textcolor=color.white, size=size.normal)
+
+// Step 2: Count confirmation candles (5 required)
+if not na(liquidity_sweep_bar) and na(entry_price) and confirmation_count < i_conf_candles
+    if not na(sweep_direction) and check_confirmation(sweep_direction, swept_level)
+        confirmation_count := confirmation_count + 1
+        
+        // Visual: Mark confirmation
+        if i_show_bos
+            label.new(bar_index, sweep_direction == "long" ? low : high,
+                     "CONF " + str.tostring(confirmation_count),
+                     color=color.new(color.blue, 70),
+                     style=label.style_label_center,
+                     textcolor=color.white, size=size.small)
+
+// Step 2b & 3: Handle premarket sweep or check continuation
+if not na(liquidity_sweep_bar) and confirmation_count >= i_conf_candles and not continuation_confirmed
+    if waiting_for_manipulation
+        // Wait for 5-minute manipulation during regular session
+        if in_session
+            // Look for small manipulation move
+            if sweep_direction == "long" and low < low[1] and close > low
+                continuation_confirmed := true
+                waiting_for_manipulation := false
+            else if sweep_direction == "short" and high > high[1] and close < high
+                continuation_confirmed := true
+                waiting_for_manipulation := false
+    else
+        // Check for continuation confirmation (EQ or FVG)
+        if check_continuation(sweep_direction)
+            continuation_confirmed := true
+            
+            // Visual: Mark continuation
+            label.new(bar_index, sweep_direction == "long" ? low : high,
+                     "CONT",
+                     color=color.new(color.purple, 70),
+                     style=label.style_label_center,
+                     textcolor=color.white, size=size.small)
+
+// Step 4: Entry confirmation (1 candle)
+if continuation_confirmed and entry_confirmation_count < i_entry_conf_candles and na(entry_price)
+    if not na(sweep_direction) and check_confirmation(sweep_direction, swept_level)
+        entry_confirmation_count := entry_confirmation_count + 1
+        
+        if entry_confirmation_count >= i_entry_conf_candles
+            // Step 5: ENTER TRADE
+            entry_price := close
+            trade_entry_bar := bar_index
+            
+            if sweep_direction == "long"
+                stop_loss := low - atr * i_stop_loss_atr
+                take_profit := entry_price + (entry_price - stop_loss) * i_risk_reward
+                strategy.entry("Long", strategy.long, comment="Long Entry")
+                strategy.exit("Exit Long", "Long", stop=stop_loss, limit=take_profit, comment="TP/SL")
+                
+                // Visual
+                line.new(bar_index, entry_price, bar_index + 10, entry_price, 
+                        color=color.green, width=2, style=line.style_solid)
+                line.new(bar_index, stop_loss, bar_index + 10, stop_loss,
+                        color=color.red, width=1, style=line.style_dashed)
+                line.new(bar_index, take_profit, bar_index + 10, take_profit,
+                        color=color.green, width=1, style=line.style_dashed)
+                
+                label.new(bar_index, entry_price, "LONG ENTRY\nSL: " + str.tostring(stop_loss, format.mintick) + "\nTP: " + str.tostring(take_profit, format.mintick),
+                         color=color_bullish, style=label.style_label_left, textcolor=color.white, size=size.normal)
+            
+            else if sweep_direction == "short"
+                stop_loss := high + atr * i_stop_loss_atr
+                take_profit := entry_price - (stop_loss - entry_price) * i_risk_reward
+                strategy.entry("Short", strategy.short, comment="Short Entry")
+                strategy.exit("Exit Short", "Short", stop=stop_loss, limit=take_profit, comment="TP/SL")
+                
+                // Visual
+                line.new(bar_index, entry_price, bar_index + 10, entry_price,
+                        color=color.red, width=2, style=line.style_solid)
+                line.new(bar_index, stop_loss, bar_index + 10, stop_loss,
+                        color=color.red, width=1, style=line.style_dashed)
+                line.new(bar_index, take_profit, bar_index + 10, take_profit,
+                        color=color.green, width=1, style=line.style_dashed)
+                
+                label.new(bar_index, entry_price, "SHORT ENTRY\nSL: " + str.tostring(stop_loss, format.mintick) + "\nTP: " + str.tostring(take_profit, format.mintick),
+                         color=color_bearish, style=label.style_label_left, textcolor=color.white, size=size.normal)
+            
+            position_entered := true
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// VISUAL ELEMENTS
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// Plot session highs/lows
+plot(i_show_liquidity and not na(session_high) ? session_high : na, "Session High", color=color_liquidity, linewidth=2, style=plot.style_line)
+plot(i_show_liquidity and not na(session_low) ? session_low : na, "Session Low", color=color_liquidity, linewidth=2, style=plot.style_line)
+
+// Plot HTF levels
+plot(i_show_liquidity and not na(htf1_high) ? htf1_high : na, "HTF1 High", color=color.new(color.orange, 60), linewidth=1, style=plot.style_circles)
+plot(i_show_liquidity and not na(htf1_low) ? htf1_low : na, "HTF1 Low", color=color.new(color.orange, 60), linewidth=1, style=plot.style_circles)
+
+// Background color for sessions
+bgcolor(in_session ? color.new(color.blue, 95) : na, title="Trading Session")
+bgcolor(in_premarket ? color.new(color.yellow, 95) : na, title="Premarket Session")
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// ALERTS
+// ═══════════════════════════════════════════════════════════════════════════════
+alertcondition(sweep_detected, "Liquidity Sweep Detected", "Liquidity sweep detected: {{sweep_direction}}")
+alertcondition(continuation_confirmed, "Continuation Confirmed", "Continuation pattern confirmed")
+alertcondition(position_entered, "Trade Entry", "Trade entered: {{sweep_direction}}")

@@ -1,0 +1,304 @@
+//+------------------------------------------------------------------+
+//|                                          EMA200WithORBStrategy.mq5 |
+//|                                  Copyright 2024, MetaQuotes Ltd. |
+//|                                             https://www.mql5.com |
+//+------------------------------------------------------------------+
+#property copyright "Copyright 2024, MetaQuotes Ltd."
+#property link      "https://www.mql5.com"
+#property version   "1.00"
+#property description "Enter long when price breaks above ORB and 200 EMA. Enter short when price breaks below ORB and 200 EMA."
+#property description "Stop loss set at ORB Low for longs and ORB High for shorts. Includes gap filter to trade only in gap direction."
+
+#include <Trade\Trade.mqh>
+
+// Input Parameters
+input group "ORB Parameters"
+input int    ORBStartHour = 9;              // ORB Start Hour (0-23)
+input int    ORBStartMinute = 30;           // ORB Start Minute (0-59)
+input int    ORBEndHour = 10;               // ORB End Hour (0-23)
+input int    ORBEndMinute = 0;              // ORB End Minute (0-59)
+
+input group "EMA Parameters"
+input int    EMAPeriod = 200;               // EMA Period
+
+input group "Gap Filter"
+input bool   UseGapFilter = true;           // Use Gap Filter
+input double MinimumGapSize = 0.5;          // Minimum Gap Size (Points)
+
+// Global Variables
+int emaHandle;
+double emaBuffer[];
+CTrade trade;
+
+// ORB Variables
+double openingRangeHigh = 0;
+double openingRangeLow = DBL_MAX;
+bool isORBSet = false;
+
+// Gap Filter Variables
+datetime currentTradeDate = 0;
+double previousDayClose = 0;
+double currentDayOpen = 0;
+int gapDirection = 0;  // 1 = positive gap (long only), -1 = negative gap (short only), 0 = no gap or filter disabled
+bool gapCalculated = false;
+
+//+------------------------------------------------------------------+
+//| Expert initialization function                                   |
+//+------------------------------------------------------------------+
+int OnInit()
+{
+   // Create EMA indicator handle
+   emaHandle = iMA(_Symbol, _Period, EMAPeriod, 0, MODE_EMA, PRICE_CLOSE);
+   
+   if(emaHandle == INVALID_HANDLE)
+   {
+      Print("Error creating EMA indicator: ", GetLastError());
+      return(INIT_FAILED);
+   }
+   
+   // Set array as series
+   ArraySetAsSeries(emaBuffer, true);
+   
+   // Initialize trade object
+   trade.SetExpertMagicNumber(123456);
+   trade.SetDeviationInPoints(10);
+   trade.SetTypeFilling(ORDER_FILLING_FOK);
+   
+   Print("EMA200WithORBStrategy initialized successfully");
+   return(INIT_SUCCEEDED);
+}
+
+//+------------------------------------------------------------------+
+//| Expert deinitialization function                                 |
+//+------------------------------------------------------------------+
+void OnDeinit(const int reason)
+{
+   // Release indicator handle
+   if(emaHandle != INVALID_HANDLE)
+      IndicatorRelease(emaHandle);
+}
+
+//+------------------------------------------------------------------+
+//| Expert tick function                                             |
+//+------------------------------------------------------------------+
+void OnTick()
+{
+   // Check if we have enough bars
+   if(Bars(_Symbol, _Period) < EMAPeriod + 1)
+      return;
+   
+   // Check for new bar
+   static datetime lastBarTime = 0;
+   datetime currentBarTime = iTime(_Symbol, _Period, 0);
+   
+   if(currentBarTime == lastBarTime)
+      return;
+   
+   lastBarTime = currentBarTime;
+   
+   // Copy EMA values
+   if(CopyBuffer(emaHandle, 0, 0, 3, emaBuffer) < 3)
+   {
+      Print("Error copying EMA buffer: ", GetLastError());
+      return;
+   }
+   
+   // Get current bar data
+   MqlRates rates[];
+   ArraySetAsSeries(rates, true);
+   if(CopyRates(_Symbol, _Period, 0, 3, rates) < 3)
+   {
+      Print("Error copying rates: ", GetLastError());
+      return;
+   }
+   
+   // Check for new trading day
+   MqlDateTime currentTime, prevTime;
+   TimeToStruct(rates[0].time, currentTime);
+   
+   if(rates[0].time >= currentTradeDate + 86400) // New day
+   {
+      // Reset for new day
+      openingRangeHigh = 0;
+      openingRangeLow = DBL_MAX;
+      isORBSet = false;
+      gapCalculated = false;
+      gapDirection = 0;
+      currentTradeDate = StringToTime(IntegerToString(currentTime.year) + "." + 
+                                      IntegerToString(currentTime.mon) + "." + 
+                                      IntegerToString(currentTime.day));
+      
+      // Calculate gap for the new day
+      if(UseGapFilter)
+         CalculateGap(rates);
+   }
+   
+   // Capture Opening Range High and Low during ORB time window
+   if(!isORBSet)
+   {
+      int currentHour = currentTime.hour;
+      int currentMinute = currentTime.min;
+      
+      // Check if we're within ORB time window
+      int currentTimeMinutes = currentHour * 60 + currentMinute;
+      int orbStartMinutes = ORBStartHour * 60 + ORBStartMinute;
+      int orbEndMinutes = ORBEndHour * 60 + ORBEndMinute;
+      
+      if(currentTimeMinutes >= orbStartMinutes && currentTimeMinutes <= orbEndMinutes)
+      {
+         if(rates[0].high > openingRangeHigh)
+            openingRangeHigh = rates[0].high;
+         
+         if(rates[0].low < openingRangeLow)
+            openingRangeLow = rates[0].low;
+      }
+      
+      // After ORB time window, set the flag
+      if(currentTimeMinutes > orbEndMinutes && openingRangeHigh > 0 && openingRangeLow < DBL_MAX)
+      {
+         isORBSet = true;
+         Print(TimeToString(rates[0].time), " ORB High: ", openingRangeHigh, ", ORB Low: ", openingRangeLow);
+      }
+   }
+   
+   // Ensure ORB is set before checking for breakouts
+   if(!isORBSet)
+      return;
+   
+   // Apply gap filter to determine which direction trades are allowed
+   bool longTradesAllowed = true;
+   bool shortTradesAllowed = true;
+   
+   if(UseGapFilter)
+   {
+      if(gapDirection == 1) // Positive gap - only long trades
+         shortTradesAllowed = false;
+      else if(gapDirection == -1) // Negative gap - only short trades
+         longTradesAllowed = false;
+      else if(gapDirection == 0) // Gap too small - NO trades allowed
+      {
+         longTradesAllowed = false;
+         shortTradesAllowed = false;
+      }
+   }
+   
+   // Get current position
+   bool hasPosition = PositionSelect(_Symbol);
+   long positionType = hasPosition ? PositionGetInteger(POSITION_TYPE) : -1;
+   
+   double currentClose = rates[0].close;
+   double currentEMA = emaBuffer[0];
+   
+   // Long Entry Condition:
+   // 1. Close breaks above ORB High
+   // 2. Close is above 200 EMA
+   // 3. Gap filter allows long trades (if enabled)
+   if(longTradesAllowed && currentClose > openingRangeHigh && currentClose > currentEMA)
+   {
+      if(positionType == POSITION_TYPE_SELL)
+      {
+         // Exit short position before entering long
+         trade.PositionClose(_Symbol);
+         Print(TimeToString(rates[0].time), " Exited Short Position on Long Entry.");
+      }
+      
+      if(positionType != POSITION_TYPE_BUY)
+      {
+         // Calculate lot size (use fixed lot or implement your own money management)
+         double lotSize = 0.1; // Fixed lot size, adjust as needed
+         
+         // Enter long position with stop loss at ORB Low
+         if(trade.Buy(lotSize, _Symbol, 0, openingRangeLow, 0, "LongEntry"))
+         {
+            Print(TimeToString(rates[0].time), " Entered Long Position. SL: ", openingRangeLow);
+         }
+         else
+         {
+            Print("Error entering long position: ", GetLastError());
+         }
+      }
+   }
+   // Short Entry Condition:
+   // 1. Close breaks below ORB Low
+   // 2. Close is below 200 EMA
+   // 3. Gap filter allows short trades (if enabled)
+   else if(shortTradesAllowed && currentClose < openingRangeLow && currentClose < currentEMA)
+   {
+      if(positionType == POSITION_TYPE_BUY)
+      {
+         // Exit long position before entering short
+         trade.PositionClose(_Symbol);
+         Print(TimeToString(rates[0].time), " Exited Long Position on Short Entry.");
+      }
+      
+      if(positionType != POSITION_TYPE_SELL)
+      {
+         // Calculate lot size (use fixed lot or implement your own money management)
+         double lotSize = 0.1; // Fixed lot size, adjust as needed
+         
+         // Enter short position with stop loss at ORB High
+         if(trade.Sell(lotSize, _Symbol, 0, openingRangeHigh, 0, "ShortEntry"))
+         {
+            Print(TimeToString(rates[0].time), " Entered Short Position. SL: ", openingRangeHigh);
+         }
+         else
+         {
+            Print("Error entering short position: ", GetLastError());
+         }
+      }
+   }
+}
+
+//+------------------------------------------------------------------+
+//| Calculate Gap                                                     |
+//+------------------------------------------------------------------+
+void CalculateGap(MqlRates &rates[])
+{
+   if(gapCalculated)
+      return;
+   
+   // Get previous day's data
+   MqlRates prevDayRates[];
+   ArraySetAsSeries(prevDayRates, true);
+   
+   // Copy rates from previous day
+   datetime startOfToday = currentTradeDate;
+   datetime endOfYesterday = startOfToday - 1;
+   
+   if(CopyRates(_Symbol, PERIOD_D1, endOfYesterday, 1, prevDayRates) < 1)
+   {
+      Print("Error getting previous day data: ", GetLastError());
+      return;
+   }
+   
+   previousDayClose = prevDayRates[0].close;
+   currentDayOpen = rates[0].open;
+   
+   double gapSize = MathAbs(currentDayOpen - previousDayClose) / _Point;
+   
+   if(gapSize >= MinimumGapSize)
+   {
+      if(currentDayOpen > previousDayClose)
+      {
+         gapDirection = 1; // Positive gap - go long only
+         Print(TimeToString(rates[0].time, TIME_DATE), " - Positive gap detected: ",
+               DoubleToString(gapSize, 2), " points. Long trades only.");
+      }
+      else if(currentDayOpen < previousDayClose)
+      {
+         gapDirection = -1; // Negative gap - go short only
+         Print(TimeToString(rates[0].time, TIME_DATE), " - Negative gap detected: ",
+               DoubleToString(gapSize, 2), " points. Short trades only.");
+      }
+   }
+   else
+   {
+      gapDirection = 0; // Gap too small - no trades
+      Print(TimeToString(rates[0].time, TIME_DATE), " - Gap size (",
+            DoubleToString(gapSize, 2), " points) below minimum (",
+            DoubleToString(MinimumGapSize, 2), " points). No trades allowed.");
+   }
+   
+   gapCalculated = true;
+}
+//+------------------------------------------------------------------+

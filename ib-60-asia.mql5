@@ -1,0 +1,1013 @@
+//+------------------------------------------------------------------+
+//|                                                       IB60.mql5 |
+//|                        Initial Balance Breakout 60min Strategy   |
+//|                                                                  |
+//+------------------------------------------------------------------+
+#property copyright "IB Breakout Strategy"
+#property link      ""
+#property version   "1.02"
+#property strict
+
+#include <Trade\Trade.mqh>
+
+CTrade trade;
+
+// Input Parameters
+input group "=== Trading Session ==="
+input int SessionStartHour = 16;       // Session Start Hour (GMT+2: 16 for US market 9:30 AM EST)
+input int SessionStartMinute = 30;     // Session Start Minute
+input int SessionEndHour = 23;         // Session End Hour (GMT+2: 23 for US market 4:00 PM EST)
+input int SessionEndMinute = 0;        // Session End Minute
+
+input group "=== Asian Range Settings ==="
+input bool UseAsianRangeFilter = true; // Use Asian Range as Directional Filter
+input int AsianStartHour = 1;          // Asian Session Start Hour (GMT+2: 1 = 7 PM EST previous day)
+input int AsianStartMinute = 0;        // Asian Session Start Minute
+input int AsianEndHour = 11;           // Asian Session End Hour (GMT+2: 11 = 4 AM EST)
+input int AsianEndMinute = 0;          // Asian Session End Minute
+input bool RequireARBreakout = true;   // Require AR Breakout Before IB Entry
+input bool OnlyTradeARDirection = true; // Only Trade in AR Breakout Direction
+
+input group "=== London Range Settings ==="
+input bool UseLondonRangeFilter = false; // Use London Range as Directional Filter
+input int LondonStartHour = 11;        // London Session Start Hour (GMT+2: 11 = 3 AM EST)
+input int LondonStartMinute = 0;       // London Session Start Minute
+input int LondonEndHour = 16;          // London Session End Hour (GMT+2: 16 = 9:30 AM EST)
+input int LondonEndMinute = 30;        // London Session End Minute
+input bool RequireLRBreakout = true;   // Require LR Breakout Before IB Entry
+input bool OnlyTradeLRDirection = true; // Only Trade in LR Breakout Direction
+
+input group "=== EMA Filter ==="
+input bool UseEMAFilter = true;        // Use EMA 200 Trend Filter
+input int EMAPeriod = 200;             // EMA Period
+input ENUM_TIMEFRAMES EMATimeframe = PERIOD_H1; // EMA Timeframe
+
+input group "=== Strategy Settings ==="
+input int IBPeriodMinutes = 60;        // Initial Balance Period (minutes)
+input ENUM_TIMEFRAMES CandleTimeframe = PERIOD_M30; // Candle Timeframe for Breakout
+input bool BreakoutByClose = true;     // Breakout Measured by Close (vs High/Low)
+
+input group "=== Risk Management ==="
+input double RiskPercent = 1.0;        // Risk Percent per Trade
+input double LotSize = 0.1;            // Fixed Lot Size (if RiskPercent = 0)
+input bool UseIBRangeStopLoss = true;  // Use IB Range as Stop Loss
+input double StopLossPercent = 1.0;    // Stop Loss % of Entry Price (if UseIBRangeStopLoss = false)
+input bool UseTrailingStop = false;    // Use Trailing Stop
+input double TrailingStopPercent = 0.5; // Trailing Stop % of Current Price
+
+input group "=== Trade Management ==="
+input bool OneTradePerDay = true;      // One Trade Per Day
+input bool CloseAtSessionEnd = true;   // Close Positions at Session End
+input bool UseOpeningCandleFilter = true; // Use Opening Candle Continuation Filter
+
+input group "=== Partial Take Profit ==="
+input bool UsePartialTP = true;        // Use Partial Take Profit
+input double TP1_Multiplier = 0.5;     // TP1: IB Range Multiplier
+input double TP1_ClosePercent = 33.0;  // TP1: % of Position to Close
+input double TP2_Multiplier = 1.0;     // TP2: IB Range Multiplier
+input double TP2_ClosePercent = 33.0;  // TP2: % of Position to Close
+input double TP3_Multiplier = 2.0;     // TP3: IB Range Multiplier (Final)
+input bool MoveToBreakEven = true;     // Move SL to Break-Even After TP1
+
+// Global Variables
+double ibHigh = 0;
+double ibLow = 0;
+bool ibFormed = false;
+bool tradeTakenToday = false;
+datetime currentDay = 0;
+datetime ibStartTime = 0;
+datetime ibEndTime = 0;
+bool longBreakout = false;
+bool shortBreakout = false;
+bool openingCandleBullish = false;  // Opening candle direction
+bool openingCandleSet = false;       // Opening candle analyzed
+
+// Asian Range Variables
+double arHigh = 0;
+double arLow = 0;
+bool arFormed = false;
+datetime arStartTime = 0;
+datetime arEndTime = 0;
+bool arBullishBreakout = false;      // Price broke above AR
+bool arBearishBreakout = false;      // Price broke below AR
+string arBias = "NONE";               // "LONG", "SHORT", or "NONE"
+
+// London Range Variables
+double lrHigh = 0;
+double lrLow = 0;
+bool lrFormed = false;
+datetime lrStartTime = 0;
+datetime lrEndTime = 0;
+bool lrBullishBreakout = false;      // Price broke above LR
+bool lrBearishBreakout = false;      // Price broke below LR
+string lrBias = "NONE";               // "LONG", "SHORT", or "NONE"
+
+// EMA Variables
+int emaHandle = INVALID_HANDLE;
+double emaBuffer[];
+
+// Partial TP tracking
+ulong mainTicket = 0;           // Main position ticket
+double initialLots = 0;         // Initial position size
+bool tp1Hit = false;            // TP1 reached
+bool tp2Hit = false;            // TP2 reached
+bool movedToBreakEven = false;  // SL moved to break-even
+
+//+------------------------------------------------------------------+
+//| Expert initialization function                                   |
+//+------------------------------------------------------------------+
+int OnInit()
+{
+   Print("IB60 + Asian Range Strategy Initialized");
+   Print("IB Period: ", IBPeriodMinutes, " minutes");
+   Print("Session: ", SessionStartHour, ":", SessionStartMinute, " - ", SessionEndHour, ":", SessionEndMinute);
+   
+   if(UseAsianRangeFilter)
+   {
+      Print("Asian Range Filter: ENABLED");
+      Print("Asian Session: ", AsianStartHour, ":", AsianStartMinute, " - ", AsianEndHour, ":", AsianEndMinute);
+      Print("Require AR Breakout: ", RequireARBreakout ? "YES" : "NO");
+      Print("Only Trade AR Direction: ", OnlyTradeARDirection ? "YES" : "NO");
+   }
+   else
+   {
+      Print("Asian Range Filter: DISABLED");
+   }
+   
+   if(UseLondonRangeFilter)
+   {
+      Print("London Range Filter: ENABLED");
+      Print("London Session: ", LondonStartHour, ":", LondonStartMinute, " - ", LondonEndHour, ":", LondonEndMinute);
+      Print("Require LR Breakout: ", RequireLRBreakout ? "YES" : "NO");
+      Print("Only Trade LR Direction: ", OnlyTradeLRDirection ? "YES" : "NO");
+   }
+   else
+   {
+      Print("London Range Filter: DISABLED");
+   }
+   
+   // Initialize EMA indicator
+   if(UseEMAFilter)
+   {
+      emaHandle = iMA(_Symbol, EMATimeframe, EMAPeriod, 0, MODE_EMA, PRICE_CLOSE);
+      if(emaHandle == INVALID_HANDLE)
+      {
+         Print("Failed to create EMA indicator handle. Error: ", GetLastError());
+         return(INIT_FAILED);
+      }
+      ArraySetAsSeries(emaBuffer, true);
+      Print("EMA Filter: ENABLED (", EMAPeriod, " on ", EnumToString(EMATimeframe), ")");
+   }
+   else
+   {
+      Print("EMA Filter: DISABLED");
+   }
+   
+   return(INIT_SUCCEEDED);
+}
+
+//+------------------------------------------------------------------+
+//| Expert deinitialization function                                 |
+//+------------------------------------------------------------------+
+void OnDeinit(const int reason)
+{
+   if(emaHandle != INVALID_HANDLE)
+      IndicatorRelease(emaHandle);
+   
+   Print("IB60 Strategy Deinitialized");
+}
+
+//+------------------------------------------------------------------+
+//| Expert tick function                                             |
+//+------------------------------------------------------------------+
+void OnTick()
+{
+   // Check if new day
+   datetime now = TimeCurrent();
+   MqlDateTime timeStruct;
+   TimeToStruct(now, timeStruct);
+   
+   datetime todayDate = StringToTime(IntegerToString(timeStruct.year) + "." + 
+                                      IntegerToString(timeStruct.mon) + "." + 
+                                      IntegerToString(timeStruct.day));
+   
+   if(todayDate != currentDay)
+   {
+      // New day - reset variables
+      currentDay = todayDate;
+      ibFormed = false;
+      tradeTakenToday = false;
+      ibHigh = 0;
+      ibLow = 0;
+      longBreakout = false;
+      shortBreakout = false;
+      openingCandleSet = false;
+      
+      // Reset Asian Range variables
+      arHigh = 0;
+      arLow = 0;
+      arFormed = false;
+      arBullishBreakout = false;
+      arBearishBreakout = false;
+      arBias = "NONE";
+      
+      // Reset London Range variables
+      lrHigh = 0;
+      lrLow = 0;
+      lrFormed = false;
+      lrBullishBreakout = false;
+      lrBearishBreakout = false;
+      lrBias = "NONE";
+      
+      // Reset partial TP tracking
+      mainTicket = 0;
+      initialLots = 0;
+      tp1Hit = false;
+      tp2Hit = false;
+      movedToBreakEven = false;
+      
+      // Calculate Asian Range times (from previous day evening to current day morning)
+      arStartTime = StringToTime(IntegerToString(timeStruct.year) + "." + 
+                                  IntegerToString(timeStruct.mon) + "." + 
+                                  IntegerToString(timeStruct.day) + " " +
+                                  IntegerToString(AsianStartHour) +":" + 
+                                  IntegerToString(AsianStartMinute));
+      arEndTime = StringToTime(IntegerToString(timeStruct.year) + "." + 
+                                IntegerToString(timeStruct.mon) + "." + 
+                                IntegerToString(timeStruct.day) + " " +
+                                IntegerToString(AsianEndHour) +":" + 
+                                IntegerToString(AsianEndMinute));
+      
+      // Calculate London Range times
+      lrStartTime = StringToTime(IntegerToString(timeStruct.year) + "." + 
+                                  IntegerToString(timeStruct.mon) + "." + 
+                                  IntegerToString(timeStruct.day) + " " +
+                                  IntegerToString(LondonStartHour) +":" + 
+                                  IntegerToString(LondonStartMinute));
+      lrEndTime = StringToTime(IntegerToString(timeStruct.year) + "." + 
+                                IntegerToString(timeStruct.mon) + "." + 
+                                IntegerToString(timeStruct.day) + " " +
+                                IntegerToString(LondonEndHour) +":" + 
+                                IntegerToString(LondonEndMinute));
+      
+      // Calculate IB start and end times for today
+      ibStartTime = StringToTime(IntegerToString(timeStruct.year) + "." + 
+                                  IntegerToString(timeStruct.mon) + "." + 
+                                  IntegerToString(timeStruct.day) + " " +
+                                  IntegerToString(SessionStartHour) +":" + 
+                                  IntegerToString(SessionStartMinute));
+      ibEndTime = ibStartTime + IBPeriodMinutes * 60;
+   }
+   
+   // Form Asian Range after Asian session ends
+   if(UseAsianRangeFilter && !arFormed && now >= arEndTime + 60)
+   {
+      UpdateAsianRange();
+      
+      if(arHigh > 0 && arLow > 0)
+      {
+         arFormed = true;
+         double arRange = arHigh - arLow;
+         Print("✓ Asian Range Formed - High: ", arHigh, " Low: ", arLow, " Range: ", arRange/_Point, " points");
+      }
+   }
+   
+   // Check for Asian Range breakout (before IB forms)
+   if(UseAsianRangeFilter && arFormed && !ibFormed)
+   {
+      CheckAsianRangeBreakout();
+   }
+   
+   // Form London Range after London session ends
+   if(UseLondonRangeFilter && !lrFormed && now >= lrEndTime + 60)
+   {
+      UpdateLondonRange();
+      
+      if(lrHigh > 0 && lrLow > 0)
+      {
+         lrFormed = true;
+         double lrRange = lrHigh - lrLow;
+         Print("✓ London Range Formed - High: ", lrHigh, " Low: ", lrLow, " Range: ", lrRange/_Point, " points");
+      }
+   }
+   
+   // Check for London Range breakout (before IB forms)
+   if(UseLondonRangeFilter && lrFormed && !ibFormed)
+   {
+      CheckLondonRangeBreakout();
+   }
+   
+   // Check if we're in trading session
+   if(!IsInTradingSession(now))
+   {
+      if(CloseAtSessionEnd && PositionsTotal() > 0)
+      {
+         CloseAllPositions();
+      }
+      return;
+   }
+   
+   // Form Initial Balance after period ends (wait for M30 candles to be indexed)
+   // We need to be past 17:30 for the 17:00-17:30 candle to be available as bar 1
+   if(!ibFormed && now >= ibEndTime + 60)  // Wait 1 minute after IB period ends
+   {
+      UpdateInitialBalance();
+      
+      if(ibHigh > 0 && ibLow > 0)
+      {
+         ibFormed = true;
+         Print("✓ IB Formed - High: ", ibHigh, " Low: ", ibLow);
+         
+         // Analyze opening candle direction (60-min IB candle)
+         if(UseOpeningCandleFilter && !openingCandleSet)
+         {
+            double ibOpen = iOpen(_Symbol, PERIOD_H1, 1);   // Opening price of IB period
+            double ibClose = iClose(_Symbol, PERIOD_H1, 1); // Closing price of IB period
+            openingCandleBullish = (ibClose > ibOpen);
+            openingCandleSet = true;
+            
+            string direction = openingCandleBullish ? "Bullish" : "Bearish";
+            Print("✓ Opening Candle (60min): ", direction, " | Open: ", ibOpen, " Close: ", ibClose);
+         }
+      }
+      else
+      {
+         Print("✗ IB Formation FAILED - No candles found for today");
+      }
+   }
+   
+   // Check for breakout after IB is formed
+   if(ibFormed && (!OneTradePerDay || !tradeTakenToday))
+   {
+      CheckForBreakout();
+   }
+   
+   // Manage partial take profit
+   if(UsePartialTP && mainTicket > 0)
+   {
+      ManagePartialTP();
+   }
+   
+   // Manage trailing stop
+   if(UseTrailingStop)
+   {
+      ManageTrailingStop();
+   }
+}
+
+//+------------------------------------------------------------------+
+//| Check if current time is in trading session                      |
+//+------------------------------------------------------------------+
+bool IsInTradingSession(datetime time)
+{
+   MqlDateTime timeStruct;
+   TimeToStruct(time, timeStruct);
+   
+   int currentMinutes = timeStruct.hour * 60 + timeStruct.min;
+   int startMinutes = SessionStartHour * 60 + SessionStartMinute;
+   int endMinutes = SessionEndHour * 60 + SessionEndMinute;
+   
+   return (currentMinutes >= startMinutes && currentMinutes < endMinutes);
+}
+
+//+------------------------------------------------------------------+
+//| Update Initial Balance high and low using M30 candles            |
+//+------------------------------------------------------------------+
+void UpdateInitialBalance()
+{
+   Print("Looking for IB candles. IB Period: ", TimeToString(ibStartTime, TIME_DATE|TIME_MINUTES), " - ", TimeToString(ibEndTime, TIME_MINUTES));
+   
+   // We need 2 M30 candles: 16:30-17:00 and 17:00-17:30
+   // Look back through recent M30 candles to find those in the IB period
+   int candlesFound = 0;
+   
+   for(int i = 1; i <= 10; i++)
+   {
+      datetime candleTime = iTime(_Symbol, PERIOD_M30, i);
+      datetime candleEndTime = candleTime + 1800; // M30 candle ends 30 min later
+      
+      Print("  Checking bar ", i, ": ", TimeToString(candleTime, TIME_DATE|TIME_MINUTES), " (ends ", TimeToString(candleEndTime, TIME_MINUTES), ")");
+      
+      // Check if this M30 candle is from today AND starts within the IB period
+      // We want candles at 16:30 and 17:00 (both start before 17:30) from the same day
+      MqlDateTime candleStruct, ibStruct;
+      TimeToStruct(candleTime, candleStruct);
+      TimeToStruct(ibStartTime, ibStruct);
+      
+      bool sameDay = (candleStruct.year == ibStruct.year && 
+                      candleStruct.mon == ibStruct.mon && 
+                      candleStruct.day == ibStruct.day);
+      
+      if(sameDay && candleTime >= ibStartTime && candleTime < ibEndTime)
+      {
+         double high = iHigh(_Symbol, PERIOD_M30, i);
+         double low = iLow(_Symbol, PERIOD_M30, i);
+         
+         if(ibHigh == 0 || high > ibHigh)
+            ibHigh = high;
+         
+         if(ibLow == 0 || low < ibLow)
+            ibLow = low;
+         
+         candlesFound++;
+         Print("  >>> IB M30 Candle ", candlesFound, " at bar ", i, ": ", TimeToString(candleTime, TIME_MINUTES), " H=", high, " L=", low);
+      }
+      else
+      {
+         MqlDateTime candleStruct, ibStruct;
+         TimeToStruct(candleTime, candleStruct);
+         TimeToStruct(ibStartTime, ibStruct);
+         bool sameDay = (candleStruct.year == ibStruct.year && candleStruct.mon == ibStruct.mon && candleStruct.day == ibStruct.day);
+         
+         if(!sameDay)
+            Print("  ... Bar ", i, " is from different day");
+         else
+            Print("  ... Bar ", i, " outside IB period (need >= ", TimeToString(ibStartTime, TIME_MINUTES), " and < ", TimeToString(ibEndTime, TIME_MINUTES), ")");
+      }
+   }
+   
+   if(ibHigh > 0 && ibLow > 0)
+   {
+      Print(">>> IB Formed from ", candlesFound, " M30 candles: H=", ibHigh, " L=", ibLow, " Range=", (ibHigh-ibLow)/_Point, " points");
+   }
+   else
+   {
+      Print("!!! IB NOT FOUND - No M30 candles in period ", TimeToString(ibStartTime, TIME_MINUTES), " - ", TimeToString(ibEndTime, TIME_MINUTES));
+   }
+}
+
+//+------------------------------------------------------------------+
+//| Check for breakout of Initial Balance                            |
+//+------------------------------------------------------------------+
+void CheckForBreakout()
+{
+   // Get current candle data on the specified timeframe
+   double close = iClose(_Symbol, CandleTimeframe, 1);  // Use bar 1 (last completed candle)
+   double high = iHigh(_Symbol, CandleTimeframe, 1);
+   double low = iLow(_Symbol, CandleTimeframe, 1);
+   datetime candleTime = iTime(_Symbol, CandleTimeframe, 1);
+   
+   static datetime lastCheckedCandle = 0;
+   if(candleTime == lastCheckedCandle)
+      return;  // Already checked this candle
+   
+   lastCheckedCandle = candleTime;
+   Print("Checking breakout on candle: ", TimeToString(candleTime, TIME_MINUTES), " Close=", close, " IB High=", ibHigh, " IB Low=", ibLow);
+   
+   // Check for long breakout
+   if(!longBreakout && PositionsTotal() == 0)
+   {
+      bool breakout = false;
+      
+      if(BreakoutByClose)
+         breakout = (close > ibHigh);
+      else
+         breakout = (high > ibHigh);
+      
+      // Apply opening candle filter
+      if(UseOpeningCandleFilter && !openingCandleBullish)
+      {
+         if(breakout)
+            Print("⊘ Long breakout ignored - Opening candle was bearish");
+         breakout = false;
+      }
+      
+      // Apply Asian Range filter
+      if(UseAsianRangeFilter && breakout)
+      {
+         if(RequireARBreakout && !arBullishBreakout)
+         {
+            Print("⊘ Long breakout ignored - No bullish AR breakout yet (AR High: ", arHigh, ")");
+            breakout = false;
+         }
+         else if(OnlyTradeARDirection && arBias == "SHORT")
+         {
+            Print("⊘ Long breakout ignored - AR bias is SHORT");
+            breakout = false;
+         }
+         else if(breakout)
+         {
+            Print("✓ Long breakout APPROVED - AR bias: ", arBias, " | AR broken: ", arBullishBreakout ? "YES" : "NO");
+         }
+      }
+      
+      // Apply London Range filter
+      if(UseLondonRangeFilter && breakout)
+      {
+         if(RequireLRBreakout && !lrBullishBreakout)
+         {
+            Print("⊘ Long breakout ignored - No bullish LR breakout yet (LR High: ", lrHigh, ")");
+            breakout = false;
+         }
+         else if(OnlyTradeLRDirection && lrBias == "SHORT")
+         {
+            Print("⊘ Long breakout ignored - LR bias is SHORT");
+            breakout = false;
+         }
+         else if(breakout)
+         {
+            Print("✓ Long breakout APPROVED - LR bias: ", lrBias, " | LR broken: ", lrBullishBreakout ? "YES" : "NO");
+         }
+      }
+      
+      // Apply EMA filter
+      if(UseEMAFilter && breakout)
+      {
+         double currentPrice = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
+         double emaValue = GetEMAValue();
+         
+         if(emaValue > 0 && currentPrice < emaValue)
+         {
+            Print("⊘ Long breakout ignored - Price (", currentPrice, ") below EMA", EMAPeriod, " (", emaValue, ")");
+            breakout = false;
+         }
+         else if(emaValue > 0)
+         {
+            Print("✓ Long breakout EMA check passed - Price (", currentPrice, ") above EMA", EMAPeriod, " (", emaValue, ")");
+         }
+      }
+      
+      if(breakout)
+      {
+         longBreakout = true;
+         OpenLongPosition();
+         tradeTakenToday = true;
+         if(OneTradePerDay) return;
+      }
+   }
+   
+   // Check for short breakout
+   if(!shortBreakout && PositionsTotal() == 0)
+   {
+      bool breakout = false;
+      
+      if(BreakoutByClose)
+         breakout = (close < ibLow);
+      else
+         breakout = (low < ibLow);
+      
+      // Apply opening candle filter
+      if(UseOpeningCandleFilter && openingCandleBullish)
+      {
+         if(breakout)
+            Print("⊘ Short breakout ignored - Opening candle was bullish");
+         breakout = false;
+      }
+      
+      // Apply Asian Range filter
+      if(UseAsianRangeFilter && breakout)
+      {
+         if(RequireARBreakout && !arBearishBreakout)
+         {
+            Print("⊘ Short breakout ignored - No bearish AR breakout yet (AR Low: ", arLow, ")");
+            breakout = false;
+         }
+         else if(OnlyTradeARDirection && arBias == "LONG")
+         {
+            Print("⊘ Short breakout ignored - AR bias is LONG");
+            breakout = false;
+         }
+         else if(breakout)
+         {
+            Print("✓ Short breakout APPROVED - AR bias: ", arBias, " | AR broken: ", arBearishBreakout ? "YES" : "NO");
+         }
+      }
+      
+      // Apply London Range filter
+      if(UseLondonRangeFilter && breakout)
+      {
+         if(RequireLRBreakout && !lrBearishBreakout)
+         {
+            Print("⊘ Short breakout ignored - No bearish LR breakout yet (LR Low: ", lrLow, ")");
+            breakout = false;
+         }
+         else if(OnlyTradeLRDirection && lrBias == "LONG")
+         {
+            Print("⊘ Short breakout ignored - LR bias is LONG");
+            breakout = false;
+         }
+         else if(breakout)
+         {
+            Print("✓ Short breakout APPROVED - LR bias: ", lrBias, " | LR broken: ", lrBearishBreakout ? "YES" : "NO");
+         }
+      }
+      
+      // Apply EMA filter
+      if(UseEMAFilter && breakout)
+      {
+         double currentPrice = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+         double emaValue = GetEMAValue();
+         
+         if(emaValue > 0 && currentPrice > emaValue)
+         {
+            Print("⊘ Short breakout ignored - Price (", currentPrice, ") above EMA", EMAPeriod, " (", emaValue, ")");
+            breakout = false;
+         }
+         else if(emaValue > 0)
+         {
+            Print("✓ Short breakout EMA check passed - Price (", currentPrice, ") below EMA", EMAPeriod, " (", emaValue, ")");
+         }
+      }
+      
+      if(breakout)
+      {
+         shortBreakout = true;
+         OpenShortPosition();
+         tradeTakenToday = true;
+      }
+   }
+}
+
+//+------------------------------------------------------------------+
+//| Open Long Position                                                |
+//+------------------------------------------------------------------+
+void OpenLongPosition()
+{
+   double price = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
+   double sl = 0;
+   double tp = 0;
+   
+   // Calculate Stop Loss
+   if(UseIBRangeStopLoss)
+   {
+      sl = ibLow; // Use IB low as stop loss
+   }
+   else
+   {
+      sl = price - (price * StopLossPercent / 100.0);
+   }
+   
+   // Calculate Take Profit based on IB range
+   double ibRange = ibHigh - ibLow;
+   double tpMultiplier = UsePartialTP ? TP3_Multiplier : 2.0;
+   tp = price + (ibRange * tpMultiplier);
+   
+   // Calculate lot size
+   double lots = CalculateLotSize(price - sl);
+   
+   if(trade.Buy(lots, _Symbol, price, sl, tp, "IB60 Long"))
+   {
+      mainTicket = trade.ResultOrder();
+      initialLots = lots;
+      Print("Long position opened at ", price, " SL: ", sl, " TP: ", tp, " Lots: ", lots);
+      if(UsePartialTP)
+         Print("Partial TP enabled: TP1=", TP1_Multiplier, "x (", TP1_ClosePercent, "%), TP2=", TP2_Multiplier, "x (", TP2_ClosePercent, "%), TP3=", TP3_Multiplier, "x");
+   }
+   else
+   {
+      Print("Failed to open long position. Error: ", GetLastError());
+   }
+}
+
+//+------------------------------------------------------------------+
+//| Open Short Position                                               |
+//+------------------------------------------------------------------+
+void OpenShortPosition()
+{
+   double price = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+   double sl = 0;
+   double tp = 0;
+   
+   // Calculate Stop Loss
+   if(UseIBRangeStopLoss)
+   {
+      sl = ibHigh; // Use IB high as stop loss
+   }
+   else
+   {
+      sl = price + (price * StopLossPercent / 100.0);
+   }
+   
+   // Calculate Take Profit based on IB range
+   double ibRange = ibHigh - ibLow;
+   double tpMultiplier = UsePartialTP ? TP3_Multiplier : 2.0;
+   tp = price - (ibRange * tpMultiplier);
+   
+   // Calculate lot size
+   double lots = CalculateLotSize(sl - price);
+   
+   if(trade.Sell(lots, _Symbol, price, sl, tp, "IB60 Short"))
+   {
+      mainTicket = trade.ResultOrder();
+      initialLots = lots;
+      Print("Short position opened at ", price, " SL: ", sl, " TP: ", tp, " Lots: ", lots);
+      if(UsePartialTP)
+         Print("Partial TP enabled: TP1=", TP1_Multiplier, "x (", TP1_ClosePercent, "%), TP2=", TP2_Multiplier, "x (", TP2_ClosePercent, "%), TP3=", TP3_Multiplier, "x");
+   }
+   else
+   {
+      Print("Failed to open short position. Error: ", GetLastError());
+   }
+}
+
+//+------------------------------------------------------------------+
+//| Calculate Lot Size based on risk                                 |
+//+------------------------------------------------------------------+
+double CalculateLotSize(double slDistance)
+{
+   if(RiskPercent <= 0)
+      return LotSize;
+   
+   double accountBalance = AccountInfoDouble(ACCOUNT_BALANCE);
+   double riskAmount = accountBalance * RiskPercent / 100.0;
+   
+   double tickValue = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_VALUE);
+   double tickSize = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_SIZE);
+   
+   double slInTicks = slDistance / tickSize;
+   double lots = riskAmount / (slInTicks * tickValue);
+   
+   // Normalize lot size
+   double minLot = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MIN);
+   double maxLot = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MAX);
+   double lotStep = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_STEP);
+   
+   lots = MathFloor(lots / lotStep) * lotStep;
+   lots = MathMax(minLot, MathMin(maxLot, lots));
+   
+   return lots;
+}
+
+//+------------------------------------------------------------------+
+//| Manage Trailing Stop                                             |
+//+------------------------------------------------------------------+
+void ManageTrailingStop()
+{
+   for(int i = PositionsTotal() - 1; i >= 0; i--)
+   {
+      ulong ticket = PositionGetTicket(i);
+      if(ticket <= 0) continue;
+      
+      if(PositionGetString(POSITION_SYMBOL) != _Symbol) continue;
+      
+      double positionOpenPrice = PositionGetDouble(POSITION_PRICE_OPEN);
+      double currentSL = PositionGetDouble(POSITION_SL);
+      double currentTP = PositionGetDouble(POSITION_TP);
+      
+      if(PositionGetInteger(POSITION_TYPE) == POSITION_TYPE_BUY)
+      {
+         double currentPrice = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+         double newSL = currentPrice - (currentPrice * TrailingStopPercent / 100.0);
+         
+         if(newSL > currentSL && newSL < currentPrice)
+         {
+            trade.PositionModify(ticket, newSL, currentTP);
+            Print("Trailing stop updated for long position. New SL: ", newSL);
+         }
+      }
+      else if(PositionGetInteger(POSITION_TYPE) == POSITION_TYPE_SELL)
+      {
+         double currentPrice = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
+         double newSL = currentPrice + (currentPrice * TrailingStopPercent / 100.0);
+         
+         if(newSL < currentSL && newSL > currentPrice)
+         {
+            trade.PositionModify(ticket, newSL, currentTP);
+            Print("Trailing stop updated for short position. New SL: ", newSL);
+         }
+      }
+   }
+}
+
+//+------------------------------------------------------------------+
+//| Manage Partial Take Profit                                       |
+//+------------------------------------------------------------------+
+void ManagePartialTP()
+{
+   // Check if position still exists
+   if(!PositionSelectByTicket(mainTicket))
+   {
+      mainTicket = 0;
+      return;
+   }
+   
+   double entryPrice = PositionGetDouble(POSITION_PRICE_OPEN);
+   double currentPrice = PositionGetInteger(POSITION_TYPE) == POSITION_TYPE_BUY ? 
+                         SymbolInfoDouble(_Symbol, SYMBOL_BID) : 
+                         SymbolInfoDouble(_Symbol, SYMBOL_ASK);
+   double currentLots = PositionGetDouble(POSITION_VOLUME);
+   
+   double ibRange = ibHigh - ibLow;
+   bool isLong = (PositionGetInteger(POSITION_TYPE) == POSITION_TYPE_BUY);
+   
+   // Calculate profit in IB range multiples
+   double profitMultiple = isLong ? 
+                          (currentPrice - entryPrice) / ibRange : 
+                          (entryPrice - currentPrice) / ibRange;
+   
+   // Check TP1
+   if(!tp1Hit && profitMultiple >= TP1_Multiplier)
+   {
+      double lotStep = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_STEP);
+      double minLot = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MIN);
+      double closeVolume = MathFloor((initialLots * TP1_ClosePercent / 100.0) / lotStep) * lotStep;
+      
+      if(closeVolume >= minLot && closeVolume <= currentLots)
+      {
+         if(trade.PositionClosePartial(mainTicket, closeVolume))
+         {
+            tp1Hit = true;
+            Print("✓ TP1 Hit (", TP1_Multiplier, "x IB): Closed ", TP1_ClosePercent, "% (", closeVolume, " lots) at ", currentPrice);
+            
+            // Move to break-even after TP1
+            if(MoveToBreakEven && !movedToBreakEven)
+            {
+               double currentSL = PositionGetDouble(POSITION_SL);
+               double currentTP = PositionGetDouble(POSITION_TP);
+               
+               if(trade.PositionModify(mainTicket, entryPrice, currentTP))
+               {
+                  movedToBreakEven = true;
+                  Print("✓ Stop Loss moved to Break-Even: ", entryPrice);
+               }
+            }
+         }
+      }
+   }
+   
+   // Check TP2
+   if(tp1Hit && !tp2Hit && profitMultiple >= TP2_Multiplier)
+   {
+      // Close percentage of remaining position
+      double lotStep = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_STEP);
+      double minLot = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MIN);
+      
+      // Calculate from current remaining lots, not initial
+      double closeVolume = MathFloor((currentLots * TP2_ClosePercent / 100.0) / lotStep) * lotStep;
+      
+      if(closeVolume >= minLot && closeVolume <= currentLots)
+      {
+         if(trade.PositionClosePartial(mainTicket, closeVolume))
+         {
+            tp2Hit = true;
+            Print("✓ TP2 Hit (", TP2_Multiplier, "x IB): Closed ", TP2_ClosePercent, "% of remaining (", closeVolume, " lots) at ", currentPrice);
+         }
+      }
+   }
+   
+   // TP3 is handled by the main TP order
+}
+
+//+------------------------------------------------------------------+
+//| Update Asian Range high and low                                  |
+//+------------------------------------------------------------------+
+void UpdateAsianRange()
+{
+   Print("Looking for Asian Range candles: ", TimeToString(arStartTime, TIME_DATE|TIME_MINUTES), " - ", TimeToString(arEndTime, TIME_MINUTES));
+   
+   int candlesFound = 0;
+   
+   // Look through M30 candles to find those in Asian session
+   for(int i = 1; i <= 30; i++)
+   {
+      datetime candleTime = iTime(_Symbol, PERIOD_M30, i);
+      
+      // Check if candle is within Asian Range period
+      if(candleTime >= arStartTime && candleTime < arEndTime)
+      {
+         double high = iHigh(_Symbol, PERIOD_M30, i);
+         double low = iLow(_Symbol, PERIOD_M30, i);
+         
+         if(arHigh == 0 || high > arHigh)
+            arHigh = high;
+         
+         if(arLow == 0 || low < arLow)
+            arLow = low;
+         
+         candlesFound++;
+      }
+   }
+   
+   if(arHigh > 0 && arLow > 0)
+   {
+      Print(">>> Asian Range formed from ", candlesFound, " M30 candles: H=", arHigh, " L=", arLow, " Range=", (arHigh-arLow)/_Point, " points");
+   }
+   else
+   {
+      Print("!!! Asian Range NOT FOUND");
+   }
+}
+
+//+------------------------------------------------------------------+
+//| Check for Asian Range breakout                                   |
+//+------------------------------------------------------------------+
+void CheckAsianRangeBreakout()
+{
+   double currentPrice = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+   
+   // Check for bullish AR breakout
+   if(!arBullishBreakout && currentPrice > arHigh)
+   {
+      arBullishBreakout = true;
+      arBias = "LONG";
+      Print(">>> Asian Range BULLISH Breakout at ", currentPrice, " (AR High: ", arHigh, ")");
+   }
+   
+   // Check for bearish AR breakout
+   if(!arBearishBreakout && currentPrice < arLow)
+   {
+      arBearishBreakout = true;
+      arBias = "SHORT";
+      Print(">>> Asian Range BEARISH Breakout at ", currentPrice, " (AR Low: ", arLow, ")");
+   }
+}
+
+//+------------------------------------------------------------------+
+//| Get current EMA value                                            |
+//+------------------------------------------------------------------+
+double GetEMAValue()
+{
+   if(emaHandle == INVALID_HANDLE)
+      return 0;
+   
+   if(CopyBuffer(emaHandle, 0, 0, 2, emaBuffer) < 2)
+   {
+      Print("Failed to copy EMA buffer. Error: ", GetLastError());
+      return 0;
+   }
+   
+   return emaBuffer[0];
+}
+
+//+------------------------------------------------------------------+
+//| Update London Range high and low                                 |
+//+------------------------------------------------------------------+
+void UpdateLondonRange()
+{
+   Print("Looking for London Range candles: ", TimeToString(lrStartTime, TIME_DATE|TIME_MINUTES), " - ", TimeToString(lrEndTime, TIME_MINUTES));
+   
+   int candlesFound = 0;
+   
+   // Look through M30 candles to find those in London session
+   for(int i = 1; i <= 30; i++)
+   {
+      datetime candleTime = iTime(_Symbol, PERIOD_M30, i);
+      
+      // Check if candle is within London Range period
+      if(candleTime >= lrStartTime && candleTime < lrEndTime)
+      {
+         double high = iHigh(_Symbol, PERIOD_M30, i);
+         double low = iLow(_Symbol, PERIOD_M30, i);
+         
+         if(lrHigh == 0 || high > lrHigh)
+            lrHigh = high;
+         
+         if(lrLow == 0 || low < lrLow)
+            lrLow = low;
+         
+         candlesFound++;
+      }
+   }
+   
+   if(lrHigh > 0 && lrLow > 0)
+   {
+      Print(">>> London Range formed from ", candlesFound, " M30 candles: H=", lrHigh, " L=", lrLow, " Range=", (lrHigh-lrLow)/_Point, " points");
+   }
+   else
+   {
+      Print("!!! London Range NOT FOUND");
+   }
+}
+
+//+------------------------------------------------------------------+
+//| Check for London Range breakout                                  |
+//+------------------------------------------------------------------+
+void CheckLondonRangeBreakout()
+{
+   double currentPrice = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+   
+   // Check for bullish LR breakout
+   if(!lrBullishBreakout && currentPrice > lrHigh)
+   {
+      lrBullishBreakout = true;
+      lrBias = "LONG";
+      Print(">>> London Range BULLISH Breakout at ", currentPrice, " (LR High: ", lrHigh, ")");
+   }
+   
+   // Check for bearish LR breakout
+   if(!lrBearishBreakout && currentPrice < lrLow)
+   {
+      lrBearishBreakout = true;
+      lrBias = "SHORT";
+      Print(">>> London Range BEARISH Breakout at ", currentPrice, " (LR Low: ", lrLow, ")");
+   }
+}
+
+//+------------------------------------------------------------------+
+//| Close All Positions                                              |
+//+------------------------------------------------------------------+
+void CloseAllPositions()
+{
+   for(int i = PositionsTotal() - 1; i >= 0; i--)
+   {
+      ulong ticket = PositionGetTicket(i);
+      if(ticket <= 0) continue;
+      
+      if(PositionGetString(POSITION_SYMBOL) == _Symbol)
+      {
+         trade.PositionClose(ticket);
+         Print("Position closed at session end. Ticket: ", ticket);
+      }
+   }
+}
+//+------------------------------------------------------------------+

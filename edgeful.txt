@@ -1,0 +1,412 @@
+welcome!
+'
+you
+re here because you
+'
+re interested in our algos but want to see the
+proof first.
+smart.
+inside this report, you
+'ll find a complete breakdown of each algo we
+offer:
+ORB (opening range breakout)
+gap fill
+engulfing candles
+IB algo
+for each one, we
+'ll show you:
+how it works
+real performance from 2025
+basic optimized settings
+what this could mean for your trading
+how to automate it if you want
+this is the same data our algo users see. we
+'
+re just giving it to you
+upfront.
+let'
+s get into it.
+and if you’re ready to upgrade to the algos after seeing the results
+below — just tap this button and you’ll get taken directly to checkout:
+optimize your algos →
+the ORB algo: everything you need to know
+let’s first talk about the ORB algo — what it is, what setup we’re trading,
+and the performance we’ve seen from the algo in 2025.
+what is the ORB?
+the opening range breakout (ORB) algo uses the first 15 minutes of
+trading to identify key levels. here are the two levels the algo is
+identifying for you:
+the opening range high (high made in the first 15min of trading)
+the opening range low (low made in the first 15min of trading)
+when price breaks above or below this range, the algo is looking to
+take a trade.
+the exact setup:
+the ORB algo is simple — we’re taking a breakout trade on a close above
+the 15min ORB high, or we’re taking a breakdown trade on a close below
+the 15min ORB low.
+this is a continuation setup — meaning we’re looking for price to continue
+in the direction of the breakout or breakdown (either up — breakout, or
+down — breakdown).
+the algo is only entering on a close above/below these key levels.
+profit targets & stop losses:
+on the custom TradingView ORB algo strategy itself — you’re able to set
+custom profit target and stop loss levels, both of which you can optimize
+using our ORB reports.
+you’ll get a more in-depth look at exactly how to do that once you sign
+up (we’ve got a ton of educational videos walking you through), but
+here’s what it’ll look like on TradingView once you get access:
+performance (2025 year-to-date)
+let’s now look at the performance of the ORB algo this year — from
+January 1st, 2025 to October 17th, 2025:
+trading 1 NQ contract on a $10,000 account:
+total profit: $32,000 (+320% return)
+win rate: 76%
+max drawdown: 18%
+total trades: 89
+profit factor: 2.6
+takes one trade per day max
+this is all of 2025. one NQ contract. starting with $10,000.
+to be clear — these are not the default settings.
+but I walk you through exactly how to optimize your algos — what days
+to trade long/short, what days to sit out completely, how to optimize
+your profit targets/stop losses — in our education section of the algos
+dashboard:
+what this means for you
+if you
+'
+re trading a completely random strategy — it’s very likely you’ve
+been chopped to pieces this year. and honestly, this has been one of the
+biggest pain points we’re trying to solve for you with the algos.
+consistent entries
+consistent exits
+clear rules
+the ORB is the most consistent algo we offer. if you struggle with
+emotions — holding winners too long, cutting profits early, moving stops,
+sizing too aggressively — this is the solution.
+no more sabotaging your trades.
+no more FOMO or greed.
+just simplified execution done for you (once you optimize them to fit
+your style).
+the gap fill algo: everything you need to know
+let'
+s now talk about the gap fill algo — what it is, what setup we
+'
+trading, and the performance we
+'
+ve seen from the algo in 2025.
+re
+what is a gap fill?
+the gap fill algo identifies when price opens above or below yesterday
+'
+s
+close, creating a
+"
+gap.
+" the market often fills these gaps during the
+session, and we trade toward the previous session close (PSC).
+here
+'
+s what the algo is identifying for you:
+yesterday
+'
+s close (the level we
+'
+re targeting)
+today
+'
+s open (where the gap starts)
+the gap direction (up or down)
+when there
+'
+s a gap, the algo is looking to enter toward the previous
+session close.
+the exact setup:
+the gap fill algo is simple — when price opens above or below
+yesterday
+'
+s close, we
+'
+re trading toward that previous session close.
+'
+gap up: we
+re looking to short back down to yesterday
+'
+s close
+gap down: we
+'
+re looking to long back up to yesterday
+'
+s close
+this is a mean reversion setup — meaning we
+'
+re looking for price to fill
+the gap and return to the previous session close.
+profit targets & stop losses:
+on the custom TradingView gap fill algo strategy itself — you
+'
+re able to
+set custom profit target and stop loss levels, both of which you can
+optimize using our gap fill reports.
+you
+'ll get a more in-depth look at exactly how to do that once you sign
+up (we
+'
+ve got a ton of educational videos walking you through), but
+here
+'
+s what it'll look like on TradingView once you get access:
+performance (2025 year-to-date)
+let'
+s now look at the performance of the gap fill algo this year — from
+January 1st, 2025 to October 21st, 2025:
+trading 1 NQ contract on a $10,000 account:
+total profit: $36,285 (+362% return)
+win rate: 45%
+profit factor: 1.9
+max drawdown: ~22%
+total trades: 113
+takes one trade per day max
+this is all of 2025.
+to be clear — these are not the default settings.
+but I walk you through which reports you can use to optimize your
+algos — what days to trade (Tuesday’s have the highest fill
+percentage on NQ as on November 2025), what days to sit out
+completely (Monday’s and Friday’s aren’t great on NQ as of
+November 2025), how to optimize your profit targets/stop losses — in
+our education section of the algos dashboard:
+what this means for you
+here
+'
+s what you need to understand about the gap fill — you
+'
+re going
+to lose more often than you win.
+45% win rate means 55% of your trades are losers.
+but when you win, you win big — often 3-5x bigger than your losses.
+check out this performance table to see what I mean:
+look at the trade list: +$2,000, +$3,000... then -$300,
+-$600.
+those losses are nothing compared to the winners.
+this is the opposite of the ORB algo. ORB has 76% win rate with
+smaller winners. gap fill has 45% win rate with much bigger winners.
+most traders can
+'t handle this. they take 3 losses in a row and quit
+right before the big winner.
+if you want consistent small wins, trade ORB. if you can handle more
+losses but want bigger payouts, trade gap fill.
+the engulfing candles algo: everything you need to know
+let'
+s now talk about the engulfing candles algo — what it is, what setup
+'
+we
+re trading, and the performance we
+'
+ve seen from the algo in 2025.
+what is an engulfing candle?
+the engulfing candles algo identifies when a candle fully covers
+(engulfs) the previous candle. this signals potential reversal or
+continuation, but most traders take every engulfing candle pattern and
+wonder why they lose money.
+we only take the high-probability setups.
+here
+'
+s what the algo is identifying for you:
+bullish engulfing: green candle fully covers previous red candle
+(potential reversal up)
+bearish engulfing: red candle fully covers previous green candle
+(potential reversal down)
+when an engulfing pattern forms, the algo is looking to take a trade.
+the exact setup:
+the engulfing candles algo scans for engulfing patterns on 30-minute
+charts throughout the trading session.
+this is different from ORB, IB, and gap fill — those all take one trade per
+day max. the engulfing algo can take multiple
+trades in a single session.
+profit targets & stop losses:
+as I’m sure you can see now, all of our algos have the ability to be fully
+customized, and the engulfing candles algo is no different:
+you can customize:
+your max loss
+your take profit levels
+your stop loss levels
+your min & max engulfing bar sizes
+the days you want the algo to trade
+the direction you want the algo to trade
+our goal is to give you every input possible to build a winning strategy —
+built on data.
+performance (2025 year-to-date)
+let'
+s now look at the performance of the engulfing algo this year — from
+January 1st, 2025 to August 19th, 2025:
+trading 1 ES contract on a $10,000 account:
+total profit: $20,973 (+210% return)
+win rate: 69%
+profit factor: 1.481
+max drawdown: 28%
+total trades: 215
+takes multiple trades per day (5-6 max per session)
+to be clear — these are not the default settings.
+but I walk you through exactly how to optimize your algos using excel in
+our education section of the algos dashboard.
+what this means for you
+here
+'
+s what makes the engulfing candles algo different — it performs
+really well on days when most traders get chopped to pieces.
+and because it takes multiple trades per day, you
+'
+re not sitting around
+waiting for one setup. the algo is actively trading throughout the
+session when conditions are right.
+no more getting stopped out repeatedly on range-bound sessions.
+just multiple high-probability setups executed consistently (once you
+optimize them to fit your style).
+the IB algo: everything you need to know
+let'
+s now talk about the IB algo — what it is, what setup we
+'
+re trading,
+and the performance we
+'
+ve seen from the algo in 2025.
+what is the IB?
+the initial balance (IB) algo uses the first hour of trading to identify key
+levels. here are the two levels the algo is identifying for you:
+the initial balance high (high made in the first hour of trading —
+9:30am to 10:30am ET)
+the initial balance low (low made in the first hour of trading —
+9:30am to 10:30am ET)
+when price breaks above or below this range, the algo is looking to take
+a trade.
+the exact setup:
+the IB algo waits for the full hour to form (until 10:30am ET), then looks
+for a breakout above the IB high or a breakdown below the IB low.
+from the breakout or breakdown — we’re looking for a retrace back into
+the IB range before getting long/short. this is different from the ORB that
+we just covered, and the reason is because of data. let me show you
+what I mean…
+here are the stats from our IB by retracement report on edgeful.
+what we’re analyzing is how often price retraces back into the IB range
+after a breakout or a breakdown, and to what levels it retraces. the data
+is clear:
+the above screenshot is data from ES over the last 6 months
+about 75% of the time, price will retrace back into 10% of the IB range
+after breaking out.
+about 45% of the time, price will retrace back into 25% of the IB range
+after breaking out.
+about 35% of the time, price will retrace back into 45% of the IB range
+after breaking out.
+you can then use this report to identify good entry levels as well as stop
+loss levels.
+for your entry, you want an area that price often touches after breaking
+out/breaking down (10% is a good area based on the data above).
+for your stop loss, you want an area that price doesn’t often touch after
+breaking out/breaking down (>50% makes sense based on the data
+above).
+customizations on the IB algo in TradingView
+on the actual IB algo itself — you have almost limitless ability to customize
+your inputs.
+you can change your:
+entry and exit level colors (so that they’re clearly plotted)
+your entry/exit/take profit levels based on day of the week
+your min & max initial balance range %
+ the point is to give you everything you need to create a strategy that fits
+your risk profile and trading style, while also building the foundation on
+data.
+performance (2025 year-to-date)
+let'
+s now look at the performance of the IB algo this year — from January
+1st, 2025 to October 29th, 2025:
+trading 2 ES contracts on a $10,000 account:
+total profit: ~$35,000 (+350% return)
+win rate: 41%
+profit factor: 2.1
+max drawdown: 25.5%
+total trades: 147
+takes one trade per day max
+when analyzing the above graph — it should be easy to see that the IB
+algo had a great run up until July of 2025. since then, it has gone
+sideways.
+this is normal for various strategies in the market — working, then the
+environment shifts, and then they fall out of favor for the time being. this is
+okay and completely normal.
+so what should you do in a situation like this?
+1.track the performance of the algo on a daily or weekly basis
+2.you must understand the win rate of the strategy — and then analyze
+what normal losing/winning streak periods look like (refer to the
+consecutive wins/losses graphic at the end of this PDF)
+3.you can either turn off the strategy completely, and wait for the algo to
+reach a new high on the performance chart before starting it again, or
+size down completely and only trade micros until it performs better
+this is the beauty of trading — no single strategy is going to make you a
+millionaire overnight, but when you combine different strategies and build
+confidence in them using data, you’re able to navigate any market
+environment.
+the next step: fully automating your algos
+when you get access to the algos — they’re not fully automated yet.
+you’ll get entry/exit alerts, but automating them takes a couple of extra
+steps.
+we’ve outlined exactly what you need to do on the algos dashboard,
+and have videos + step by step instructions. you’ll find those here:
+why you should automate your algos
+even if you can sit at your screen all day, can you trust yourself to follow
+the strategy?
+no hesitating. no adding to losers. no moving stops. no cutting profits
+early.
+the automation does exactly what the data says. nothing more, nothing
+less.
+and if you
+'
+re at work, in a meeting, driving, or busy during market hours?
+the automation handles everything.
+important: don
+'t skip this part
+before you automate anything:
+1.watch all education videos (required) — 13 videos total, most are just
+a few minutes
+2.paper trade for at least one week
+3.understand what each algo is doing
+4.start with small size
+automation only works if you understand what'
+s being automated. don
+'t
+rush this.
+ getting started
+1.upgrade to algos at edgeful.com/algos
+2.complete education videos
+3.join the private discord for algo users (settings shared there)
+4.paper trade for one week minimum
+5.go live when you
+'
+re ready
+optimize your algos →
+final thoughts
+you now have the data behind our algos.
+'
+you
+ve seen the real performance — not backtests, not hypotheticals.
+actual trades from 2025.
+ORB algo: 320% return, 76% win rate (1 NQ contract)
+gap fill algo: 362% return, 45% win rate (1 NQ contract)
+engulfing algo: 210% return, 69% win rate (1 ES contract)
+IB algo: ~$35,000 profit, 41% win rate (2 ES contracts)
+ the question is: are you going to keep trading blind, or are you ready
+to use what we give you to become the trader you know you can be?
+if you want access to this data in real-time — which you can track and
+see update as market conditions change — plus the automation to
+execute it for you, here
+'
+s what to do next:
+optimize your algos →
+'
+we
+re not promising you
+'ll get rich. we
+'
+re showing you what actually
+happened when traders used data instead of emotions.
+that'
+s the edge.
+talk soon,
+André
+edgeful CEO

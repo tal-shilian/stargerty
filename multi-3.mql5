@@ -1,0 +1,1041 @@
+//+------------------------------------------------------------------+
+//|                                           MultiSymbolCryptoEdge.mq5 |
+//|                                                     Copyright 2025 |
+//|                                                                    |
+//+------------------------------------------------------------------+
+#property copyright "Copyright 2025"
+#property version   "1.00"
+#property strict
+
+#include <Trade\Trade.mqh>
+#include <StdLibErr.mqh>
+
+// Input Parameters
+input string   TradeSymbols         = "BTCUSD|XAUUSD|USDJPY";   //Symbol(s) or ALL or CURRENT
+input int      EMA50Length          = 50;          // Fast EMA Length
+input int      EMA200Length         = 200;         // Slow EMA Length
+input int      BreakoutBars         = 3;           // Breakout Bars
+input bool     UseSwingStopLoss     = true;        // Use Swing-Based Stop Loss
+input int      StopLossBars         = 5;           // Stop Loss Lookback Period (if swing-based)
+input bool     UseATRStopLoss       = false;       // Use ATR-Based Stop Loss
+input int      ATRPeriod            = 14;          // ATR Period
+input double   ATRMultiplier        = 2.0;         // ATR Multiplier for Stop Loss
+input bool     UseATRTrailing       = true;        // Use ATR-Based Trailing Stop
+input double   TrailingATRMultiplier = 2.5;        // Trailing ATR Multiplier
+input double   RiskPerTrade         = 0.01;        // Risk Per Trade (%)
+input bool     UseTakeProfitRR      = true;        // Use Take Profit based on Risk-Reward
+input double   RiskRewardRatio      = 2.0;         // Risk-Reward Ratio for Take Profit
+input bool     UseBreakeven         = true;        // Move Stop to Breakeven
+input double   BreakevenAtRR        = 1.0;         // Move to Breakeven at X:1 RR
+input int      BreakevenPlusPoints  = 5;           // Breakeven Plus Points (buffer)
+input bool     UseOppositeSignalExit = true;       // Close on Opposite Signal
+enum ENUM_TRADE_DIRECTION
+{
+   LONG_ONLY = 0,      // Long Only
+   SHORT_ONLY = 1,     // Short Only
+   BOTH = 2            // Both Long and Short
+};
+input ENUM_TRADE_DIRECTION TradeDirection = BOTH;  // Trade Direction
+input bool     UseHigherTFFilter    = false;       // Use Higher Timeframe Trend Filter
+enum ENUM_HIGHER_TIMEFRAME
+{
+   HTF_M5 = PERIOD_M5,      // 5 Minutes
+   HTF_M15 = PERIOD_M15,    // 15 Minutes
+   HTF_M30 = PERIOD_M30,    // 30 Minutes
+   HTF_H1 = PERIOD_H1,      // 1 Hour
+   HTF_H4 = PERIOD_H4,      // 4 Hours
+   HTF_D1 = PERIOD_D1,      // Daily
+   HTF_W1 = PERIOD_W1       // Weekly
+};
+input ENUM_HIGHER_TIMEFRAME HigherTimeframe = HTF_H4; // Higher Timeframe to Check
+input bool     AllowMultiplePositions = true;      // Enable pyramiding (add multiple positions)
+input int      MaxPositions         = 5;           // Maximum allowed positions per symbol
+
+// GENERAL GLOBALS   
+string   AllSymbolsString           = "BTCUSD|XAUUSD|USDJPY";
+int      NumberOfTradeableSymbols;              
+string   SymbolArray[];                        
+int      TicksReceivedCount         = 0;     
+
+// INDICATOR HANDLES
+int handle_EMA50[];
+int handle_EMA200[];
+int handle_ATR[];
+
+// OPEN TRADE TRACKING
+ulong    OpenTradeOrderTicket[];    // To store 'order' ticket for trades
+int      OpenPositionCount[];       // Track number of positions per symbol
+datetime LastClosedCandleTime[];    // To track the last confirmed candle for each symbol
+bool     BreakevenMoved[];          // Track if breakeven has been moved for each position
+
+// Trading object
+CTrade trade;
+
+// Forward declarations
+void CloseOppositePositions(string symbol, long positionTypeToClose);
+
+//+------------------------------------------------------------------+
+//| Expert initialization function                                   |
+//+------------------------------------------------------------------+
+int OnInit()
+{
+   // DETERMINE WHICH SYMBOLS TO TRADE
+   if(TradeSymbols == "CURRENT")  //Override TradeSymbols input variable and use the current chart symbol only
+   {
+      NumberOfTradeableSymbols = 1;
+      
+      ArrayResize(SymbolArray, 1);
+      SymbolArray[0] = Symbol(); 
+
+      Print("EA will process ", SymbolArray[0], " only");
+   }
+   else
+   {  
+      string TradeSymbolsToUse = "";
+      
+      if(TradeSymbols == "ALL")
+         TradeSymbolsToUse = AllSymbolsString;
+      else
+         TradeSymbolsToUse = TradeSymbols;
+      
+      //CONVERT TradeSymbolsToUse TO THE STRING ARRAY SymbolArray
+      NumberOfTradeableSymbols = StringSplit(TradeSymbolsToUse, '|', SymbolArray);
+      
+      Print("EA will process: ", TradeSymbolsToUse);
+   }
+   
+   ResizeCoreArrays();
+   
+   // RESIZE INDICATOR HANDLE ARRAYS
+   ResizeIndicatorHandleArrays();
+   
+   Print("All arrays sized to accommodate ", NumberOfTradeableSymbols, " symbols");
+   
+   // INITIALIZE ARRAYS
+   for(int SymbolLoop=0; SymbolLoop < NumberOfTradeableSymbols; SymbolLoop++)
+   {
+      OpenTradeOrderTicket[SymbolLoop] = 0;
+      OpenPositionCount[SymbolLoop] = 0;
+      LastClosedCandleTime[SymbolLoop] = 0;
+      BreakevenMoved[SymbolLoop] = false;
+   }
+   
+   // CREATE INDICATOR HANDLES
+   if(!SetUpIndicatorHandles())
+      return(INIT_FAILED); 
+   
+   return(INIT_SUCCEEDED);     
+}
+
+//+------------------------------------------------------------------+
+//| Expert deinitialization function                                 |
+//+------------------------------------------------------------------+
+void OnDeinit(const int reason)
+{
+   // Release indicator handles
+   for(int SymbolLoop=0; SymbolLoop < NumberOfTradeableSymbols; SymbolLoop++)
+   {
+      IndicatorRelease(handle_EMA50[SymbolLoop]);
+      IndicatorRelease(handle_EMA200[SymbolLoop]);
+      if(UseATRStopLoss || UseATRTrailing)
+         IndicatorRelease(handle_ATR[SymbolLoop]);
+   }
+   
+   Comment("\n\rMulti-Symbol CryptoEdge EA Stopped");
+}
+
+//+------------------------------------------------------------------+
+//| Expert tick function                                             |
+//+------------------------------------------------------------------+
+void OnTick()
+{
+   if(!TerminalInfoInteger(TERMINAL_TRADE_ALLOWED))
+   {
+      Print("Trading not allowed!");
+      return;
+   }
+
+   TicksReceivedCount++;
+   string indicatorMetrics = "";
+   
+   // LOOP THROUGH EACH SYMBOL TO CHECK FOR ENTRIES AND EXITS
+   for(int SymbolLoop = 0; SymbolLoop < NumberOfTradeableSymbols; SymbolLoop++)
+   {
+      string CurrentSymbol = SymbolArray[SymbolLoop];
+      
+      // Update data for current symbol
+      if(!UpdateData(SymbolLoop))
+      {
+         Print("Failed to update data for ", CurrentSymbol);
+         continue;
+      }
+      
+      // Get current position count for this symbol
+      OpenPositionCount[SymbolLoop] = GetPositionCount(CurrentSymbol);
+      
+      // Check if a new candle has closed for this symbol
+      MqlRates temp_rates[];
+      ArraySetAsSeries(temp_rates, true);
+      CopyRates(CurrentSymbol, Period(), 0, 2, temp_rates);
+      
+      if(temp_rates[1].time != LastClosedCandleTime[SymbolLoop])
+      {
+         LastClosedCandleTime[SymbolLoop] = temp_rates[1].time;
+         
+         // Get indicator values for display
+         double ema50Value = GetEMA50Value(SymbolLoop, 1);
+         double ema200Value = GetEMA200Value(SymbolLoop, 1);
+         StringConcatenate(indicatorMetrics, indicatorMetrics, CurrentSymbol, "  |  EMA50=", 
+                          DoubleToString(ema50Value, (int)SymbolInfoInteger(CurrentSymbol, SYMBOL_DIGITS)),
+                          "  |  EMA200=",
+                          DoubleToString(ema200Value, (int)SymbolInfoInteger(CurrentSymbol, SYMBOL_DIGITS)), 
+                          "  |  POSITIONS=", OpenPositionCount[SymbolLoop], "\n\r");
+         
+         // Check for entry if we have room for more positions
+         if((AllowMultiplePositions && OpenPositionCount[SymbolLoop] < MaxPositions) || 
+            (!AllowMultiplePositions && OpenPositionCount[SymbolLoop] == 0))
+         {
+            CheckForEntry(SymbolLoop);
+         }
+         
+         // Manage existing positions on candle close
+         if(OpenPositionCount[SymbolLoop] > 0)
+         {
+            ManagePositions(SymbolLoop);
+         }
+      }
+   }
+   
+   // OUTPUT INFORMATION AND METRICS TO THE CHART (No point wasting time on this code if in the Strategy Tester)
+   if(!MQLInfoInteger(MQL_TESTER))
+      OutputStatusToChart(indicatorMetrics);
+}
+
+//+------------------------------------------------------------------+
+//| Resize core arrays for multi-symbol capability                   |
+//+------------------------------------------------------------------+
+void ResizeCoreArrays()
+{
+   ArrayResize(OpenTradeOrderTicket, NumberOfTradeableSymbols);
+   ArrayResize(OpenPositionCount, NumberOfTradeableSymbols);
+   ArrayResize(LastClosedCandleTime, NumberOfTradeableSymbols);
+   ArrayResize(BreakevenMoved, NumberOfTradeableSymbols);
+}
+
+//+------------------------------------------------------------------+
+//| Resize indicator handle arrays                                   |
+//+------------------------------------------------------------------+
+void ResizeIndicatorHandleArrays()
+{
+   ArrayResize(handle_EMA50, NumberOfTradeableSymbols);
+   ArrayResize(handle_EMA200, NumberOfTradeableSymbols);
+   ArrayResize(handle_ATR, NumberOfTradeableSymbols);
+}
+
+//+------------------------------------------------------------------+
+//| Set up required indicator handles                                |
+//+------------------------------------------------------------------+
+bool SetUpIndicatorHandles()
+{  
+   // EMA Indicators
+   for(int SymbolLoop=0; SymbolLoop < NumberOfTradeableSymbols; SymbolLoop++)
+   {
+      // Reset any previous error codes
+      ResetLastError();
+   
+      // Create 50 EMA handle
+      handle_EMA50[SymbolLoop] = iMA(SymbolArray[SymbolLoop], Period(), EMA50Length, 0, MODE_EMA, PRICE_CLOSE);
+      
+      if(handle_EMA50[SymbolLoop] == INVALID_HANDLE) 
+      { 
+         string outputMessage = "";
+         
+         if(GetLastError() == 4302)
+            outputMessage = "Symbol needs to be added to the MarketWatch";
+         else
+            StringConcatenate(outputMessage, "(error code ", GetLastError(), ")");
+
+         MessageBox("Failed to create handle of the 50 EMA indicator for " + SymbolArray[SymbolLoop] + "/" + EnumToString(Period()) + "\n\r\n\r" + 
+                     outputMessage +
+                     "\n\r\n\rEA will now terminate.");
+                      
+         return false;
+      }
+      
+      // Create 200 EMA handle
+      handle_EMA200[SymbolLoop] = iMA(SymbolArray[SymbolLoop], Period(), EMA200Length, 0, MODE_EMA, PRICE_CLOSE);
+      
+      if(handle_EMA200[SymbolLoop] == INVALID_HANDLE) 
+      { 
+         string outputMessage = "";
+         
+         if(GetLastError() == 4302)
+            outputMessage = "Symbol needs to be added to the MarketWatch";
+         else
+            StringConcatenate(outputMessage, "(error code ", GetLastError(), ")");
+
+         MessageBox("Failed to create handle of the 200 EMA indicator for " + SymbolArray[SymbolLoop] + "/" + EnumToString(Period()) + "\n\r\n\r" + 
+                     outputMessage +
+                     "\n\r\n\rEA will now terminate.");
+                      
+         return false;
+      } 
+      
+      Print("Handles for EMA50 and EMA200 / ", SymbolArray[SymbolLoop], " / ", EnumToString(Period()), " successfully created");
+   }
+   
+   // ATR Indicators (if needed)
+   if(UseATRStopLoss || UseATRTrailing)
+   {
+      for(int SymbolLoop=0; SymbolLoop < NumberOfTradeableSymbols; SymbolLoop++)
+      {
+         ResetLastError();
+         
+         handle_ATR[SymbolLoop] = iATR(SymbolArray[SymbolLoop], Period(), ATRPeriod);
+         
+         if(handle_ATR[SymbolLoop] == INVALID_HANDLE)
+         {
+            string outputMessage = "";
+            
+            if(GetLastError() == 4302)
+               outputMessage = "Symbol needs to be added to the MarketWatch";
+            else
+               StringConcatenate(outputMessage, "(error code ", GetLastError(), ")");
+
+            MessageBox("Failed to create handle of the ATR indicator for " + SymbolArray[SymbolLoop] + "/" + EnumToString(Period()) + "\n\r\n\r" + 
+                        outputMessage +
+                        "\n\r\n\rEA will now terminate.");
+                         
+            return false;
+         }
+         
+         Print("Handle for ATR / ", SymbolArray[SymbolLoop], " / ", EnumToString(Period()), " successfully created");
+      }
+   }
+   
+   // All completed without errors
+   return true;
+}
+
+//+------------------------------------------------------------------+
+//| Update all necessary data for a symbol                           |
+//+------------------------------------------------------------------+
+bool UpdateData(int SymbolLoop)
+{
+   // Successfully updated
+   return true;
+}
+
+//+------------------------------------------------------------------+
+//| Get EMA50 value at specific index for a symbol                   |
+//+------------------------------------------------------------------+
+double GetEMA50Value(int SymbolLoop, int shift)
+{
+   string CurrentSymbol = SymbolArray[SymbolLoop];
+   double emaBuffer[];
+   
+   // Set up array properties
+   ArraySetAsSeries(emaBuffer, true);
+   
+   // Get EMA values
+   if(CopyBuffer(handle_EMA50[SymbolLoop], 0, 0, 10, emaBuffer) != 10)
+   {
+      Print("Error copying EMA50 data for ", CurrentSymbol, ": ", GetLastError());
+      return 0;
+   }
+   
+   return emaBuffer[shift];
+}
+
+//+------------------------------------------------------------------+
+//| Get EMA200 value at specific index for a symbol                  |
+//+------------------------------------------------------------------+
+double GetEMA200Value(int SymbolLoop, int shift)
+{
+   string CurrentSymbol = SymbolArray[SymbolLoop];
+   double emaBuffer[];
+   
+   // Set up array properties
+   ArraySetAsSeries(emaBuffer, true);
+   
+   // Get EMA values
+   if(CopyBuffer(handle_EMA200[SymbolLoop], 0, 0, 10, emaBuffer) != 10)
+   {
+      Print("Error copying EMA200 data for ", CurrentSymbol, ": ", GetLastError());
+      return 0;
+   }
+   
+   return emaBuffer[shift];
+}
+
+//+------------------------------------------------------------------+
+//| Check if higher timeframe trend is bullish                       |
+//+------------------------------------------------------------------+
+bool IsHigherTimeframeTrendBullish(string symbol, ENUM_HIGHER_TIMEFRAME higherTF)
+{
+   ENUM_TIMEFRAMES timeframe = (ENUM_TIMEFRAMES)higherTF;
+   int handle_HTF_EMA50 = iMA(symbol, timeframe, EMA50Length, 0, MODE_EMA, PRICE_CLOSE);
+   int handle_HTF_EMA200 = iMA(symbol, timeframe, EMA200Length, 0, MODE_EMA, PRICE_CLOSE);
+   
+   if(handle_HTF_EMA50 == INVALID_HANDLE || handle_HTF_EMA200 == INVALID_HANDLE)
+   {
+      Print("Failed to create HTF indicator handles for ", symbol);
+      return false;
+   }
+   
+   double ema50Buffer[], ema200Buffer[];
+   ArraySetAsSeries(ema50Buffer, true);
+   ArraySetAsSeries(ema200Buffer, true);
+   
+   if(CopyBuffer(handle_HTF_EMA50, 0, 0, 2, ema50Buffer) != 2)
+   {
+      IndicatorRelease(handle_HTF_EMA50);
+      IndicatorRelease(handle_HTF_EMA200);
+      return false;
+   }
+   
+   if(CopyBuffer(handle_HTF_EMA200, 0, 0, 2, ema200Buffer) != 2)
+   {
+      IndicatorRelease(handle_HTF_EMA50);
+      IndicatorRelease(handle_HTF_EMA200);
+      return false;
+   }
+   
+   IndicatorRelease(handle_HTF_EMA50);
+   IndicatorRelease(handle_HTF_EMA200);
+   
+   // Bullish: 50 EMA > 200 EMA on higher timeframe
+   return (ema50Buffer[0] > ema200Buffer[0]);
+}
+
+//+------------------------------------------------------------------+
+//| Check if higher timeframe trend is bearish                       |
+//+------------------------------------------------------------------+
+bool IsHigherTimeframeTrendBearish(string symbol, ENUM_HIGHER_TIMEFRAME higherTF)
+{
+   ENUM_TIMEFRAMES timeframe = (ENUM_TIMEFRAMES)higherTF;
+   int handle_HTF_EMA50 = iMA(symbol, timeframe, EMA50Length, 0, MODE_EMA, PRICE_CLOSE);
+   int handle_HTF_EMA200 = iMA(symbol, timeframe, EMA200Length, 0, MODE_EMA, PRICE_CLOSE);
+   
+   if(handle_HTF_EMA50 == INVALID_HANDLE || handle_HTF_EMA200 == INVALID_HANDLE)
+   {
+      Print("Failed to create HTF indicator handles for ", symbol);
+      return false;
+   }
+   
+   double ema50Buffer[], ema200Buffer[];
+   ArraySetAsSeries(ema50Buffer, true);
+   ArraySetAsSeries(ema200Buffer, true);
+   
+   if(CopyBuffer(handle_HTF_EMA50, 0, 0, 2, ema50Buffer) != 2)
+   {
+      IndicatorRelease(handle_HTF_EMA50);
+      IndicatorRelease(handle_HTF_EMA200);
+      return false;
+   }
+   
+   if(CopyBuffer(handle_HTF_EMA200, 0, 0, 2, ema200Buffer) != 2)
+   {
+      IndicatorRelease(handle_HTF_EMA50);
+      IndicatorRelease(handle_HTF_EMA200);
+      return false;
+   }
+   
+   IndicatorRelease(handle_HTF_EMA50);
+   IndicatorRelease(handle_HTF_EMA200);
+   
+   // Bearish: 50 EMA < 200 EMA on higher timeframe
+   return (ema50Buffer[0] < ema200Buffer[0]);
+}
+
+//+------------------------------------------------------------------+
+//| Get ATR value at specific index for a symbol                     |
+//+------------------------------------------------------------------+
+double GetATRValue(int SymbolLoop, int shift)
+{
+   string CurrentSymbol = SymbolArray[SymbolLoop];
+   double atrBuffer[];
+   
+   // Set up array properties
+   ArraySetAsSeries(atrBuffer, true);
+   
+   // Get ATR values
+   if(CopyBuffer(handle_ATR[SymbolLoop], 0, 0, 10, atrBuffer) != 10)
+   {
+      Print("Error copying ATR data for ", CurrentSymbol, ": ", GetLastError());
+      return 0;
+   }
+   
+   return atrBuffer[shift];
+}
+
+//+------------------------------------------------------------------+
+//| Check for entry conditions and enter if valid                    |
+//+------------------------------------------------------------------+
+void CheckForEntry(int SymbolLoop)
+{
+   string CurrentSymbol = SymbolArray[SymbolLoop];
+   
+   // Get the rates data we need
+   MqlRates temp_rates[];
+   ArraySetAsSeries(temp_rates, true);
+   CopyRates(CurrentSymbol, Period(), 0, BreakoutBars + 3, temp_rates);
+   
+   // Calculate highest high and lowest low
+   double highestHigh = temp_rates[2].high;
+   double lowestLow = temp_rates[2].low;
+   for(int i = 3; i <= BreakoutBars + 1; i++)
+   {
+      highestHigh = MathMax(highestHigh, temp_rates[i].high);
+      lowestLow = MathMin(lowestLow, temp_rates[i].low);
+   }
+   
+   // Get confirmed price and EMAs from the last closed candle
+   double confirmedClose = temp_rates[1].close;
+   double confirmedEMA50 = GetEMA50Value(SymbolLoop, 1);
+   double confirmedEMA200 = GetEMA200Value(SymbolLoop, 1);
+
+   // Debug output
+   PrintFormat("%s: Close: %.5f, High: %.5f, Low: %.5f, EMA50: %.5f, EMA200: %.5f", 
+              CurrentSymbol, confirmedClose, highestHigh, lowestLow, confirmedEMA50, confirmedEMA200);
+
+   // Check for LONG entry conditions
+   // Require: Price > 50 EMA > 200 EMA (strong uptrend)
+   bool longEntryCondition = (confirmedClose > highestHigh) && 
+                             (confirmedClose > confirmedEMA50) && 
+                             (confirmedEMA50 > confirmedEMA200);
+   
+   // Apply higher timeframe filter for LONG
+   if(UseHigherTFFilter && longEntryCondition)
+   {
+      if(!IsHigherTimeframeTrendBullish(CurrentSymbol, HigherTimeframe))
+      {
+         PrintFormat("%s: Skipped LONG - Higher timeframe (%s) not bullish", 
+                     CurrentSymbol, EnumToString(HigherTimeframe));
+         longEntryCondition = false;
+      }
+   }
+   
+   // Check for SHORT entry conditions
+   // Require: Price < 50 EMA < 200 EMA (strong downtrend)
+   bool shortEntryCondition = (confirmedClose < lowestLow) && 
+                              (confirmedClose < confirmedEMA50) && 
+                              (confirmedEMA50 < confirmedEMA200);
+   
+   // Apply higher timeframe filter for SHORT
+   if(UseHigherTFFilter && shortEntryCondition)
+   {
+      if(!IsHigherTimeframeTrendBearish(CurrentSymbol, HigherTimeframe))
+      {
+         PrintFormat("%s: Skipped SHORT - Higher timeframe (%s) not bearish", 
+                     CurrentSymbol, EnumToString(HigherTimeframe));
+         shortEntryCondition = false;
+      }
+   }
+
+   // Check for opposite signal exit
+   if(UseOppositeSignalExit)
+   {
+      // Close existing SHORT positions if LONG signal appears
+      if(longEntryCondition)
+      {
+         CloseOppositePositions(CurrentSymbol, POSITION_TYPE_SELL);
+      }
+      
+      // Close existing LONG positions if SHORT signal appears
+      if(shortEntryCondition)
+      {
+         CloseOppositePositions(CurrentSymbol, POSITION_TYPE_BUY);
+      }
+   }
+   
+   // Execute LONG trade
+   if(longEntryCondition && (TradeDirection == LONG_ONLY || TradeDirection == BOTH))
+   {
+      // Calculate stop loss
+      double stopLoss = 0;
+      
+      if(UseSwingStopLoss)
+      {
+         stopLoss = CalculateStopLossLong(SymbolLoop);
+      }
+      else if(UseATRStopLoss)
+      {
+         double atrValue = GetATRValue(SymbolLoop, 1);
+         stopLoss = confirmedClose - (atrValue * ATRMultiplier);
+      }
+      else
+      {
+         Print("No stop loss method selected for ", CurrentSymbol);
+         return;
+      }
+      
+      if(stopLoss <= 0 || stopLoss >= confirmedClose)
+      {
+         Print("Invalid stop loss calculation for ", CurrentSymbol);
+         return;
+      }
+
+      // Calculate take profit based on risk-reward ratio
+      double takeProfit = 0;
+      if(UseTakeProfitRR)
+      {
+         takeProfit = CalculateTakeProfitLong(confirmedClose, stopLoss, RiskRewardRatio);
+      }
+
+      // Calculate position size
+      double positionSize = CalculatePositionSize(CurrentSymbol, confirmedClose, stopLoss);
+      if(positionSize <= 0)
+      {
+         Print("Invalid position size calculation for ", CurrentSymbol);
+         return;
+      }
+
+      // Place the LONG trade
+      if(UseTakeProfitRR)
+      {
+         PrintFormat("Placing LONG trade for %s: Lots=%.2f, Entry=%.5f, Stop=%.5f, TP=%.5f (RR=%.1f)", 
+                  CurrentSymbol, positionSize, confirmedClose, stopLoss, takeProfit, RiskRewardRatio);
+      }
+      else
+      {
+         PrintFormat("Placing LONG trade for %s: Lots=%.2f, Entry=%.5f, Stop=%.5f", 
+                  CurrentSymbol, positionSize, confirmedClose, stopLoss);
+      }
+                
+      if(!trade.Buy(positionSize, CurrentSymbol, confirmedClose, stopLoss, takeProfit, "Multi CryptoEdge LONG"))
+      {
+         PrintFormat("LONG trade failed for %s. Error: %d", CurrentSymbol, GetLastError());
+      }
+      else
+      {
+         // Update position count after successful trade
+         OpenPositionCount[SymbolLoop]++;
+      }
+   }
+   
+   // Execute SHORT trade
+   if(shortEntryCondition && (TradeDirection == SHORT_ONLY || TradeDirection == BOTH))
+   {
+      // Calculate stop loss
+      double stopLoss = 0;
+      
+      if(UseSwingStopLoss)
+      {
+         stopLoss = CalculateStopLossShort(SymbolLoop);
+      }
+      else if(UseATRStopLoss)
+      {
+         double atrValue = GetATRValue(SymbolLoop, 1);
+         stopLoss = confirmedClose + (atrValue * ATRMultiplier);
+      }
+      else
+      {
+         Print("No stop loss method selected for ", CurrentSymbol);
+         return;
+      }
+      
+      if(stopLoss <= 0 || stopLoss <= confirmedClose)
+      {
+         Print("Invalid stop loss calculation for ", CurrentSymbol);
+         return;
+      }
+
+      // Calculate take profit based on risk-reward ratio
+      double takeProfit = 0;
+      if(UseTakeProfitRR)
+      {
+         takeProfit = CalculateTakeProfitShort(confirmedClose, stopLoss, RiskRewardRatio);
+      }
+
+      // Calculate position size
+      double positionSize = CalculatePositionSizeShort(CurrentSymbol, confirmedClose, stopLoss);
+      if(positionSize <= 0)
+      {
+         Print("Invalid position size calculation for ", CurrentSymbol);
+         return;
+      }
+
+      // Place the SHORT trade
+      if(UseTakeProfitRR)
+      {
+         PrintFormat("Placing SHORT trade for %s: Lots=%.2f, Entry=%.5f, Stop=%.5f, TP=%.5f (RR=%.1f)", 
+                  CurrentSymbol, positionSize, confirmedClose, stopLoss, takeProfit, RiskRewardRatio);
+      }
+      else
+      {
+         PrintFormat("Placing SHORT trade for %s: Lots=%.2f, Entry=%.5f, Stop=%.5f", 
+                  CurrentSymbol, positionSize, confirmedClose, stopLoss);
+      }
+                
+      if(!trade.Sell(positionSize, CurrentSymbol, confirmedClose, stopLoss, takeProfit, "Multi CryptoEdge SHORT"))
+      {
+         PrintFormat("SHORT trade failed for %s. Error: %d", CurrentSymbol, GetLastError());
+      }
+      else
+      {
+         // Update position count after successful trade
+         OpenPositionCount[SymbolLoop]++;
+      }
+   }
+}
+
+//+------------------------------------------------------------------+
+//| Calculate stop loss level for LONG based on confirmed candles    |
+//+------------------------------------------------------------------+
+double CalculateStopLossLong(int SymbolLoop)
+{
+   string CurrentSymbol = SymbolArray[SymbolLoop];
+   
+   // Get the rates data we need
+   MqlRates temp_rates[];
+   ArraySetAsSeries(temp_rates, true);
+   CopyRates(CurrentSymbol, Period(), 0, StopLossBars + 1, temp_rates);
+   
+   // Using confirmed candle data: starting from the last closed candle
+   double lowestLow = temp_rates[1].low;
+   for(int i = 1; i <= StopLossBars; i++)
+   {
+      lowestLow = MathMin(lowestLow, temp_rates[i].low);
+   }
+   return lowestLow;
+}
+
+//+------------------------------------------------------------------+
+//| Calculate stop loss level for SHORT based on confirmed candles   |
+//+------------------------------------------------------------------+
+double CalculateStopLossShort(int SymbolLoop)
+{
+   string CurrentSymbol = SymbolArray[SymbolLoop];
+   
+   // Get the rates data we need
+   MqlRates temp_rates[];
+   ArraySetAsSeries(temp_rates, true);
+   CopyRates(CurrentSymbol, Period(), 0, StopLossBars + 1, temp_rates);
+   
+   // Using confirmed candle data: starting from the last closed candle
+   double highestHigh = temp_rates[1].high;
+   for(int i = 1; i <= StopLossBars; i++)
+   {
+      highestHigh = MathMax(highestHigh, temp_rates[i].high);
+   }
+   return highestHigh;
+}
+
+//+------------------------------------------------------------------+
+//| Calculate take profit for LONG based on risk-reward ratio        |
+//+------------------------------------------------------------------+
+double CalculateTakeProfitLong(double entryPrice, double stopLoss, double rrRatio)
+{
+   double riskDistance = entryPrice - stopLoss;
+   double rewardDistance = riskDistance * rrRatio;
+   double takeProfit = entryPrice + rewardDistance;
+   
+   return takeProfit;
+}
+
+//+------------------------------------------------------------------+
+//| Calculate take profit for SHORT based on risk-reward ratio       |
+//+------------------------------------------------------------------+
+double CalculateTakeProfitShort(double entryPrice, double stopLoss, double rrRatio)
+{
+   double riskDistance = stopLoss - entryPrice;
+   double rewardDistance = riskDistance * rrRatio;
+   double takeProfit = entryPrice - rewardDistance;
+   
+   return takeProfit;
+}
+
+//+------------------------------------------------------------------+
+//| Calculate position size for LONG based on risk                   |
+//+------------------------------------------------------------------+
+double CalculatePositionSize(string symbol, double entryPrice, double stopLoss)
+{
+   if(stopLoss >= entryPrice)
+   {
+      Print("Stop loss must be below entry price for LONG on ", symbol);
+      return 0;
+   }
+
+   double riskAmount = AccountInfoDouble(ACCOUNT_EQUITY) * RiskPerTrade;
+   double pipValue = SymbolInfoDouble(symbol, SYMBOL_TRADE_TICK_VALUE);
+   double tickSize = SymbolInfoDouble(symbol, SYMBOL_TRADE_TICK_SIZE);
+   
+   if(pipValue == 0 || tickSize == 0)
+   {
+      Print("Invalid symbol tick value or size for ", symbol);
+      return 0;
+   }
+
+   double distance = entryPrice - stopLoss;
+   double ticks = distance / tickSize;
+   double positionSize = riskAmount / (ticks * pipValue);
+
+   // Normalize the position size
+   double minLot = SymbolInfoDouble(symbol, SYMBOL_VOLUME_MIN);
+   double maxLot = SymbolInfoDouble(symbol, SYMBOL_VOLUME_MAX);
+   double stepLot = SymbolInfoDouble(symbol, SYMBOL_VOLUME_STEP);
+
+   positionSize = MathFloor(positionSize / stepLot) * stepLot;
+   positionSize = MathMax(minLot, MathMin(maxLot, positionSize));
+
+   return positionSize;
+}
+
+//+------------------------------------------------------------------+
+//| Calculate position size for SHORT based on risk                  |
+//+------------------------------------------------------------------+
+double CalculatePositionSizeShort(string symbol, double entryPrice, double stopLoss)
+{
+   if(stopLoss <= entryPrice)
+   {
+      Print("Stop loss must be above entry price for SHORT on ", symbol);
+      return 0;
+   }
+
+   double riskAmount = AccountInfoDouble(ACCOUNT_EQUITY) * RiskPerTrade;
+   double pipValue = SymbolInfoDouble(symbol, SYMBOL_TRADE_TICK_VALUE);
+   double tickSize = SymbolInfoDouble(symbol, SYMBOL_TRADE_TICK_SIZE);
+   
+   if(pipValue == 0 || tickSize == 0)
+   {
+      Print("Invalid symbol tick value or size for ", symbol);
+      return 0;
+   }
+
+   double distance = stopLoss - entryPrice;
+   double ticks = distance / tickSize;
+   double positionSize = riskAmount / (ticks * pipValue);
+
+   // Normalize the position size
+   double minLot = SymbolInfoDouble(symbol, SYMBOL_VOLUME_MIN);
+   double maxLot = SymbolInfoDouble(symbol, SYMBOL_VOLUME_MAX);
+   double stepLot = SymbolInfoDouble(symbol, SYMBOL_VOLUME_STEP);
+
+   positionSize = MathFloor(positionSize / stepLot) * stepLot;
+   positionSize = MathMax(minLot, MathMin(maxLot, positionSize));
+
+   return positionSize;
+}
+
+//+------------------------------------------------------------------+
+//| Manage open positions by updating their stop losses              |
+//+------------------------------------------------------------------+
+void ManagePositions(int SymbolLoop)
+{
+   string CurrentSymbol = SymbolArray[SymbolLoop];
+   
+   // Loop through all positions
+   for(int i = 0; i < PositionsTotal(); i++)
+   {
+      ulong ticket = PositionGetTicket(i);
+      if(PositionSelectByTicket(ticket))
+      {
+         // Check if this position is for our current symbol
+         string positionSymbol = PositionGetString(POSITION_SYMBOL);
+         if(positionSymbol == CurrentSymbol)
+         {
+            double currentStopLoss = PositionGetDouble(POSITION_SL);
+            double currentTakeProfit = PositionGetDouble(POSITION_TP);
+            long positionType = PositionGetInteger(POSITION_TYPE);
+            double entryPrice = PositionGetDouble(POSITION_PRICE_OPEN);
+            double currentPrice = PositionGetDouble(POSITION_PRICE_CURRENT);
+            
+            // Check and move to breakeven if conditions met
+            if(UseBreakeven)
+            {
+               MoveToBreakeven(ticket, positionType, entryPrice, currentPrice, currentStopLoss, currentTakeProfit, CurrentSymbol);
+            }
+            
+            // Handle LONG positions - Trailing Stop
+            if(positionType == POSITION_TYPE_BUY)
+            {
+               double newStopLoss = currentStopLoss;
+               
+               // Calculate trailing stop based on method
+               if(UseATRTrailing)
+               {
+                  double atrValue = GetATRValue(SymbolLoop, 1);
+                  double currentPrice = PositionGetDouble(POSITION_PRICE_CURRENT);
+                  newStopLoss = currentPrice - (atrValue * TrailingATRMultiplier);
+               }
+               else if(UseSwingStopLoss)
+               {
+                  newStopLoss = CalculateStopLossLong(SymbolLoop);
+               }
+               
+               if(newStopLoss > currentStopLoss)  // Move stop loss up for long
+               {
+                  trade.PositionModify(ticket, newStopLoss, currentTakeProfit);
+               }
+            }
+            // Handle SHORT positions - Trailing Stop
+            else if(positionType == POSITION_TYPE_SELL)
+            {
+               double newStopLoss = currentStopLoss;
+               
+               // Calculate trailing stop based on method
+               if(UseATRTrailing)
+               {
+                  double atrValue = GetATRValue(SymbolLoop, 1);
+                  double currentPrice = PositionGetDouble(POSITION_PRICE_CURRENT);
+                  newStopLoss = currentPrice + (atrValue * TrailingATRMultiplier);
+               }
+               else if(UseSwingStopLoss)
+               {
+                  newStopLoss = CalculateStopLossShort(SymbolLoop);
+               }
+               
+               if(newStopLoss < currentStopLoss)  // Move stop loss down for short
+               {
+                  trade.PositionModify(ticket, newStopLoss, currentTakeProfit);
+               }
+            }
+         }
+      }
+   }
+}
+
+//+------------------------------------------------------------------+
+//| Close positions of opposite type when opposite signal appears    |
+//+------------------------------------------------------------------+
+void CloseOppositePositions(string symbol, long positionTypeToClose)
+{
+   int closedCount = 0;
+   
+   // Loop through all positions
+   for(int i = PositionsTotal() - 1; i >= 0; i--)
+   {
+      ulong ticket = PositionGetTicket(i);
+      if(PositionSelectByTicket(ticket))
+      {
+         string positionSymbol = PositionGetString(POSITION_SYMBOL);
+         long positionType = PositionGetInteger(POSITION_TYPE);
+         
+         // Check if this is the position we want to close
+         if(positionSymbol == symbol && positionType == positionTypeToClose)
+         {
+            double volume = PositionGetDouble(POSITION_VOLUME);
+            
+            if(trade.PositionClose(ticket))
+            {
+               closedCount++;
+               if(positionTypeToClose == POSITION_TYPE_BUY)
+               {
+                  PrintFormat("Closed LONG %s (Ticket=%d, Volume=%.2f) due to SHORT signal",
+                             symbol, ticket, volume);
+               }
+               else
+               {
+                  PrintFormat("Closed SHORT %s (Ticket=%d, Volume=%.2f) due to LONG signal",
+                             symbol, ticket, volume);
+               }
+            }
+            else
+            {
+               PrintFormat("Failed to close position %s (Ticket=%d). Error: %d",
+                          symbol, ticket, GetLastError());
+            }
+         }
+      }
+   }
+   
+   if(closedCount > 0)
+   {
+      PrintFormat("Total %d opposite positions closed for %s", closedCount, symbol);
+   }
+}
+
+//+------------------------------------------------------------------+
+//| Move stop loss to breakeven when profit target reached           |
+//+------------------------------------------------------------------+
+void MoveToBreakeven(ulong ticket, long positionType, double entryPrice, double currentPrice, 
+                     double currentStopLoss, double currentTakeProfit, string symbol)
+{
+   double pointSize = SymbolInfoDouble(symbol, SYMBOL_POINT);
+   int digits = (int)SymbolInfoInteger(symbol, SYMBOL_DIGITS);
+   
+   // Calculate risk distance
+   double riskDistance = 0;
+   
+   if(positionType == POSITION_TYPE_BUY)
+   {
+      riskDistance = entryPrice - currentStopLoss;
+      double profitDistance = currentPrice - entryPrice;
+      double requiredProfit = riskDistance * BreakevenAtRR;
+      
+      // Check if profit target reached and breakeven not yet moved
+      if(profitDistance >= requiredProfit && currentStopLoss < entryPrice)
+      {
+         double newStopLoss = entryPrice + (BreakevenPlusPoints * pointSize);
+         newStopLoss = NormalizeDouble(newStopLoss, digits);
+         
+         if(trade.PositionModify(ticket, newStopLoss, currentTakeProfit))
+         {
+            PrintFormat("Breakeven moved for LONG %s: Ticket=%d, New SL=%.5f (Entry + %d points)",
+                       symbol, ticket, newStopLoss, BreakevenPlusPoints);
+         }
+      }
+   }
+   else if(positionType == POSITION_TYPE_SELL)
+   {
+      riskDistance = currentStopLoss - entryPrice;
+      double profitDistance = entryPrice - currentPrice;
+      double requiredProfit = riskDistance * BreakevenAtRR;
+      
+      // Check if profit target reached and breakeven not yet moved
+      if(profitDistance >= requiredProfit && currentStopLoss > entryPrice)
+      {
+         double newStopLoss = entryPrice - (BreakevenPlusPoints * pointSize);
+         newStopLoss = NormalizeDouble(newStopLoss, digits);
+         
+         if(trade.PositionModify(ticket, newStopLoss, currentTakeProfit))
+         {
+            PrintFormat("Breakeven moved for SHORT %s: Ticket=%d, New SL=%.5f (Entry - %d points)",
+                       symbol, ticket, newStopLoss, BreakevenPlusPoints);
+         }
+      }
+   }
+}
+
+//+------------------------------------------------------------------+
+//| Count open positions for a specific symbol                       |
+//+------------------------------------------------------------------+
+int GetPositionCount(string symbol)
+{
+   int count = 0;
+   
+   for(int i = 0; i < PositionsTotal(); i++)
+   {
+      ulong ticket = PositionGetTicket(i);
+      if(PositionSelectByTicket(ticket))
+      {
+         string positionSymbol = PositionGetString(POSITION_SYMBOL);
+         if(positionSymbol == symbol)
+         {
+            count++;
+         }
+      }
+   }
+   
+   return count;
+}
+
+//+------------------------------------------------------------------+
+//| Output status information to chart                               |
+//+------------------------------------------------------------------+
+void OutputStatusToChart(string additionalMetrics)
+{      
+   // GET GMT OFFSET OF MT5 SERVER
+   double offsetInHours = (TimeCurrent() - TimeGMT()) / 3600.0;
+
+   // SYMBOLS BEING TRADED
+   string symbolsText = "SYMBOLS BEING TRADED: ";
+   for(int SymbolLoop=0; SymbolLoop < NumberOfTradeableSymbols; SymbolLoop++)
+      StringConcatenate(symbolsText, symbolsText, " ", SymbolArray[SymbolLoop]);
+   
+   Comment("\n\rMT5 SERVER TIME: ", TimeCurrent(), " (OPERATING AT UTC/GMT", StringFormat("%+.1f", offsetInHours), ")\n\r\n\r",
+            Symbol(), " TICKS RECEIVED: ", TicksReceivedCount, "\n\r\n\r",
+            symbolsText,
+            "\n\r\n\r", additionalMetrics);
+}

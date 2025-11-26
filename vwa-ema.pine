@@ -1,0 +1,103 @@
+//@version=5
+strategy("VWAP + 2 EMA Strategy", overlay=true, initial_capital=10000, default_qty_type=strategy.percent_of_equity, default_qty_value=100)
+
+// ============================================================================
+// INPUTS
+// ============================================================================
+emaLength = input.int(200, "EMA Length", minval=1)
+stopLoss = input.int(17, "Stop Loss (Points)", minval=1, maxval=100)
+takeProfit = input.int(17, "Take Profit (Points)", minval=1, maxval=100)
+startHour = input.int(10, "Start Trading Hour (ET)", minval=0, maxval=23)
+startMinute = input.int(0, "Start Trading Minute", minval=0, maxval=59)
+
+// ============================================================================
+// INDICATORS
+// ============================================================================
+// VWAP (Red line)
+vwapValue = ta.vwap(close)
+
+// 200 EMA on 1-minute timeframe (Yellow line)
+ema1min = request.security(syminfo.tickerid, "1", ta.ema(close, emaLength), gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_on)
+
+// 200 EMA on 5-minute timeframe (Blue line)
+ema5min = request.security(syminfo.tickerid, "5", ta.ema(close, emaLength), gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_on)
+
+// ============================================================================
+// PLOT INDICATORS
+// ============================================================================
+plot(vwapValue, "VWAP", color=color.red, linewidth=2)
+plot(ema1min, "200 EMA (1min)", color=color.yellow, linewidth=2)
+plot(ema5min, "200 EMA (5min)", color=color.blue, linewidth=2)
+
+// ============================================================================
+// TIME FILTER
+// ============================================================================
+// Convert ET to exchange time (adjust based on your timezone)
+// Note: TradingView uses exchange timezone, you may need to adjust this
+// For US markets, ET is typically UTC-5 (EST) or UTC-4 (EDT)
+currentHour = hour(time, "America/New_York")
+currentMinute = minute(time, "America/New_York")
+
+// Check if current time is after start time
+timeCondition = (currentHour > startHour) or (currentHour == startHour and currentMinute >= startMinute)
+
+// ============================================================================
+// ENTRY CONDITIONS
+// ============================================================================
+// Define trend: above or below all lines
+bullishTrend = close > vwapValue and close > ema1min and close > ema5min
+bearishTrend = close < vwapValue and close < ema1min and close < ema5min
+
+// Detect pullback to support/resistance levels (within tolerance)
+tolerance = syminfo.mintick * 5
+
+// Long: Price in bullish trend AND touching one of the support lines
+touchingVwapLong = math.abs(low - vwapValue) <= tolerance
+touchingEma1Long = math.abs(low - ema1min) <= tolerance
+touchingEma5Long = math.abs(low - ema5min) <= tolerance
+
+// Short: Price in bearish trend AND touching one of the resistance lines
+touchingVwapShort = math.abs(high - vwapValue) <= tolerance
+touchingEma1Short = math.abs(high - ema1min) <= tolerance
+touchingEma5Short = math.abs(high - ema5min) <= tolerance
+
+// Entry conditions: pullback to key level in trending market
+longCondition = timeCondition and bullishTrend and (touchingVwapLong or touchingEma1Long or touchingEma5Long)
+shortCondition = timeCondition and bearishTrend and (touchingVwapShort or touchingEma1Short or touchingEma5Short)
+
+// ============================================================================
+// POSITION MANAGEMENT
+// ============================================================================
+// Calculate stop loss and take profit levels
+longStopLevel = close - stopLoss * syminfo.mintick
+longTargetLevel = close + takeProfit * syminfo.mintick
+
+shortStopLevel = close + stopLoss * syminfo.mintick
+shortTargetLevel = close - takeProfit * syminfo.mintick
+
+// ============================================================================
+// STRATEGY EXECUTION
+// ============================================================================
+// Enter long position
+if longCondition and strategy.position_size == 0
+    strategy.entry("Long", strategy.long)
+    strategy.exit("Long Exit", "Long", stop=longStopLevel, limit=longTargetLevel)
+
+// Enter short position
+if shortCondition and strategy.position_size == 0
+    strategy.entry("Short", strategy.short)
+    strategy.exit("Short Exit", "Short", stop=shortStopLevel, limit=shortTargetLevel)
+
+// ============================================================================
+// VISUAL SIGNALS
+// ============================================================================
+// Plot entry signals
+plotshape(longCondition and strategy.position_size == 0, "Long Signal", shape.triangleup, location.belowbar, color.green, size=size.small)
+plotshape(shortCondition and strategy.position_size == 0, "Short Signal", shape.triangledown, location.abovebar, color.red, size=size.small)
+
+// ============================================================================
+// BACKGROUND COLOR (Optional)
+// ============================================================================
+// Highlight trading hours
+bgColor = timeCondition ? color.new(color.green, 95) : color.new(color.red, 95)
+bgcolor(bgColor, title="Trading Hours")

@@ -1,0 +1,213 @@
+//@version=5
+strategy("London-NY Correlation Strategy", 
+         overlay=true, 
+         initial_capital=10000,
+         default_qty_type=strategy.percent_of_equity,
+         default_qty_value=1,
+         commission_type=strategy.commission.percent,
+         commission_value=0.02)
+
+// ============================================================================
+// INPUT PARAMETERS
+// ============================================================================
+
+// Session Times (adjusted for UTC-5 exchange timezone)
+londonStart = input.int(3, "London Open Hour (UTC-5)", minval=0, maxval=23, group="Session Times", tooltip="8:00 GMT = 3:00 UTC-5")
+londonEnd = input.int(11, "London Close Hour (UTC-5)", minval=0, maxval=23, group="Session Times", tooltip="16:00 GMT = 11:00 UTC-5")
+nyStart = input.int(8, "NY Open Hour (UTC-5)", minval=0, maxval=23, group="Session Times", tooltip="13:00 GMT = 8:00 UTC-5")
+nyEnd = input.int(15, "NY Close Hour (UTC-5)", minval=0, maxval=23, group="Session Times", tooltip="20:00 GMT = 15:00 UTC-5")
+
+// Entry Settings
+entryDelayMinutes = input.int(15, "Entry Delay After NY Open (minutes)", minval=0, maxval=60, group="Entry Rules")
+entryWindowHours = input.int(1, "Entry Window Duration (hours)", minval=1, maxval=4, group="Entry Rules")
+useConfirmation = input.bool(true, "Require Price Confirmation", group="Entry Rules")
+minLondonRange = input.float(20, "Minimum London Range (pips)", minval=5, step=5, group="Entry Rules")
+
+// Risk Management
+stopLossPips = input.float(30, "Stop Loss (pips)", minval=5, step=5, group="Risk Management")
+takeProfitPips = input.float(60, "Take Profit (pips)", minval=10, step=5, group="Risk Management")
+
+// Visual Settings
+showLondonBox = input.bool(true, "Show London Session Box", group="Visuals")
+showLabels = input.bool(true, "Show Trade Labels", group="Visuals")
+
+// ============================================================================
+// HELPER FUNCTIONS
+// ============================================================================
+
+// Convert pips to price
+pipsToPrice(pips) =>
+    pips * syminfo.mintick * 10
+
+// Check if current bar is in session
+isInSession(startHour, endHour) =>
+    currentHour = hour(time)  // Use chart timezone (UTC-5)
+    currentHour >= startHour and currentHour < endHour
+
+// Get session open/close prices
+var float londonOpenPrice = na
+var float londonClosePrice = na
+var bool londonBullish = false
+var bool londonBearish = false
+var bool tradeTakenToday = false
+var int lastTradeDay = 0
+
+// ============================================================================
+// SESSION DETECTION
+// ============================================================================
+
+// Detect new day (reset at start of London session)
+if ta.change(time("D")) != 0
+    londonOpenPrice := na
+    londonClosePrice := na
+    londonBullish := false
+    londonBearish := false
+    tradeTakenToday := false
+
+// Capture London Open (during London open hour)
+isLondonOpen = hour(time) == londonStart and na(londonOpenPrice)
+if isLondonOpen
+    londonOpenPrice := open
+
+// Capture London Close (during or after London close hour)
+isLondonClose = hour(time) >= londonEnd and not na(londonOpenPrice) and na(londonClosePrice)
+if isLondonClose
+    londonClosePrice := close
+    
+    // Calculate London range in pips
+    londonRangePips = math.abs(londonClosePrice - londonOpenPrice) / pipsToPrice(1)
+    
+    // Determine bias - TEMPORARILY IGNORE MIN RANGE FOR TESTING
+    // if londonRangePips >= minLondonRange
+    if true  // Always set bias for testing
+        if londonClosePrice > londonOpenPrice
+            londonBullish := true
+            londonBearish := false
+        else if londonClosePrice < londonOpenPrice
+            londonBearish := true
+            londonBullish := false
+
+// ============================================================================
+// ENTRY LOGIC
+// ============================================================================
+
+// Calculate NY entry window
+currentHourGMT = hour(time)  // Using chart timezone (UTC-5)
+currentMinuteGMT = minute(time)
+currentTimeMinutes = currentHourGMT * 60 + currentMinuteGMT
+nyEntryStart = nyStart * 60 + entryDelayMinutes
+nyEntryEnd = nyStart * 60 + (entryWindowHours * 60)
+
+// Check if in NY entry window
+inNYEntryWindow = currentTimeMinutes >= nyEntryStart and currentTimeMinutes < nyEntryEnd
+
+// Entry conditions
+canTrade = inNYEntryWindow and not tradeTakenToday and not na(londonClosePrice)
+
+// Long Entry
+longCondition = canTrade and londonBullish
+if useConfirmation
+    longCondition := longCondition and close > londonClosePrice
+
+if longCondition and strategy.position_size == 0
+    stopLoss = close - pipsToPrice(stopLossPips)
+    takeProfit = close + pipsToPrice(takeProfitPips)
+    strategy.entry("Long", strategy.long)
+    strategy.exit("Exit Long", "Long", stop=stopLoss, limit=takeProfit)
+    tradeTakenToday := true
+    
+    if showLabels
+        label.new(bar_index, low, "BUY\n" + str.tostring(londonClosePrice > londonOpenPrice ? "London ↑" : ""), 
+                 style=label.style_label_up, color=color.green, textcolor=color.white, size=size.small)
+
+// Short Entry
+shortCondition = canTrade and londonBearish
+if useConfirmation
+    shortCondition := shortCondition and close < londonClosePrice
+
+if shortCondition and strategy.position_size == 0
+    stopLoss = close + pipsToPrice(stopLossPips)
+    takeProfit = close - pipsToPrice(takeProfitPips)
+    strategy.entry("Short", strategy.short)
+    strategy.exit("Exit Short", "Short", stop=stopLoss, limit=takeProfit)
+    tradeTakenToday := true
+    
+    if showLabels
+        label.new(bar_index, high, "SELL\n" + str.tostring(londonClosePrice < londonOpenPrice ? "London ↓" : ""), 
+                 style=label.style_label_down, color=color.red, textcolor=color.white, size=size.small)
+
+// Debug: Show when conditions are checked
+plotchar(longCondition, "Long Condition Met", "▲", location.belowbar, color.lime, size=size.small)
+plotchar(shortCondition, "Short Condition Met", "▼", location.belowbar, color.fuchsia, size=size.small)
+
+// ============================================================================
+// VISUALIZATION
+// ============================================================================
+
+// Draw London session box
+if showLondonBox and not na(londonOpenPrice) and not na(londonClosePrice)
+    londonHigh = math.max(londonOpenPrice, londonClosePrice)
+    londonLow = math.min(londonOpenPrice, londonClosePrice)
+    boxColor = londonClosePrice > londonOpenPrice ? color.new(color.green, 90) : color.new(color.red, 90)
+    
+    // Find London session start bar
+    var int londonStartBar = na
+    if isLondonOpen
+        londonStartBar := bar_index
+    
+    if not na(londonStartBar) and isLondonClose
+        box.new(londonStartBar, londonHigh, bar_index, londonLow, 
+               border_color=londonClosePrice > londonOpenPrice ? color.green : color.red,
+               bgcolor=boxColor, border_width=2)
+
+// Plot London levels
+plot(not na(londonOpenPrice) ? londonOpenPrice : na, "London Open", color=color.new(color.blue, 50), linewidth=1, style=plot.style_linebr)
+plot(not na(londonClosePrice) ? londonClosePrice : na, "London Close", color=color.new(color.orange, 50), linewidth=2, style=plot.style_linebr)
+
+// Background color for sessions
+londonSession = isInSession(londonStart, londonEnd)
+nySession = isInSession(nyStart, nyEnd)
+
+bgcolor(londonSession ? color.new(color.blue, 95) : na, title="London Session")
+bgcolor(nySession ? color.new(color.yellow, 95) : na, title="NY Session")
+
+// Debug plots
+plotchar(londonBullish, "London Bullish", "▲", location.top, color.green, size=size.tiny)
+plotchar(londonBearish, "London Bearish", "▼", location.top, color.red, size=size.tiny)
+plotchar(inNYEntryWindow, "NY Entry Window", "●", location.bottom, color.orange, size=size.tiny)
+plotchar(not na(londonOpenPrice), "London Open Captured", "O", location.belowbar, color.blue, size=size.tiny)
+plotchar(not na(londonClosePrice), "London Close Captured", "C", location.belowbar, color.orange, size=size.tiny)
+
+// Debug Table
+var table debugTable = table.new(position.top_right, 2, 8, bgcolor=color.new(color.black, 80), border_width=1)
+if barstate.islast
+    table.cell(debugTable, 0, 0, "Status", text_color=color.white, bgcolor=color.new(color.gray, 50))
+    table.cell(debugTable, 1, 0, "Value", text_color=color.white, bgcolor=color.new(color.gray, 50))
+    
+    table.cell(debugTable, 0, 1, "London Open", text_color=color.white)
+    table.cell(debugTable, 1, 1, na(londonOpenPrice) ? "Not Captured" : str.tostring(londonOpenPrice, format.mintick), 
+               text_color=na(londonOpenPrice) ? color.red : color.green)
+    
+    table.cell(debugTable, 0, 2, "London Close", text_color=color.white)
+    table.cell(debugTable, 1, 2, na(londonClosePrice) ? "Not Captured" : str.tostring(londonClosePrice, format.mintick), 
+               text_color=na(londonClosePrice) ? color.red : color.green)
+    
+    table.cell(debugTable, 0, 3, "London Bias", text_color=color.white)
+    table.cell(debugTable, 1, 3, londonBullish ? "BULLISH ↑" : londonBearish ? "BEARISH ↓" : "None", 
+               text_color=londonBullish ? color.green : londonBearish ? color.red : color.gray)
+    
+    table.cell(debugTable, 0, 4, "NY Entry Window", text_color=color.white)
+    table.cell(debugTable, 1, 4, inNYEntryWindow ? "ACTIVE" : "Inactive", 
+               text_color=inNYEntryWindow ? color.green : color.gray)
+    
+    table.cell(debugTable, 0, 5, "Can Trade", text_color=color.white)
+    table.cell(debugTable, 1, 5, canTrade ? "YES" : "NO", 
+               text_color=canTrade ? color.green : color.red)
+    
+    table.cell(debugTable, 0, 6, "Trade Taken", text_color=color.white)
+    table.cell(debugTable, 1, 6, tradeTakenToday ? "Yes" : "No", 
+               text_color=tradeTakenToday ? color.orange : color.gray)
+    
+    table.cell(debugTable, 0, 7, "Current Hour", text_color=color.white)
+    table.cell(debugTable, 1, 7, str.tostring(hour(time)) + ":" + str.format("{0,number,00}", minute(time)), 
+               text_color=color.yellow)

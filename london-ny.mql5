@@ -1,0 +1,273 @@
+//+------------------------------------------------------------------+
+//|                                                   London-NY.mql5 |
+//|                                    London-NY Correlation Strategy |
+//|                                                                  |
+//+------------------------------------------------------------------+
+#property copyright "London-NY Correlation Strategy"
+#property version   "1.00"
+#property strict
+
+// Input Parameters
+input double   LotSize = 0.01;              // Position size
+input int      StopLossPips = 30;           // Stop loss in pips
+input int      TakeProfitPips = 60;         // Take profit in pips (2:1 RR)
+input int      LondonStartHour = 10;        // London open (GMT+2: 8:00 GMT = 10:00 GMT+2)
+input int      LondonEndHour = 18;          // London close (GMT+2: 16:00 GMT = 18:00 GMT+2)
+input int      NYStartHour = 15;            // NY open (GMT+2: 13:00 GMT = 15:00 GMT+2)
+input int      NYEndHour = 22;              // NY close (GMT)
+input int      EntryDelayMinutes = 15;      // Wait X minutes after NY open
+input bool     UseConfirmation = true;      // Require price confirmation
+input double   MinLondonRangePips = 20;     // Minimum London range to trade
+input int      MagicNumber = 123456;        // Magic number for orders
+
+// Global Variables
+double londonOpen = 0;
+double londonClose = 0;
+bool londonBullish = false;
+bool londonBearish = false;
+bool tradeTakenToday = false;
+bool londonOpenCaptured = false;
+bool londonCloseCaptured = false;
+datetime currentDayStart = 0;
+double pointValue;
+
+//+------------------------------------------------------------------+
+//| Expert initialization function                                   |
+//+------------------------------------------------------------------+
+int OnInit()
+{
+   // Calculate point value based on symbol digits
+   if(_Digits == 5 || _Digits == 3)
+      pointValue = 10 * _Point;
+   else
+      pointValue = 100 * _Point;
+   
+   Print("London-NY Correlation Strategy Initialized");
+   Print("Trading: ", _Symbol);
+   Print("Point Value: ", pointValue);
+   
+   return(INIT_SUCCEEDED);
+}
+
+//+------------------------------------------------------------------+
+//| Expert deinitialization function                                 |
+//+------------------------------------------------------------------+
+void OnDeinit(const int reason)
+{
+   Print("Strategy stopped. Reason: ", reason);
+}
+
+//+------------------------------------------------------------------+
+//| Expert tick function                                             |
+//+------------------------------------------------------------------+
+void OnTick()
+{
+   // Get current time info
+   MqlDateTime timeStruct;
+   TimeToStruct(TimeCurrent(), timeStruct);
+   int currentHour = timeStruct.hour;
+   int currentMinute = timeStruct.min;
+   datetime todayStart = iTime(_Symbol, PERIOD_D1, 0);
+   
+   // Reset daily flags at start of new day
+   if(todayStart != currentDayStart)
+   {
+      currentDayStart = todayStart;
+      tradeTakenToday = false;
+      londonOpen = 0;
+      londonClose = 0;
+      londonBullish = false;
+      londonBearish = false;
+      londonOpenCaptured = false;
+      londonCloseCaptured = false;
+      Print("New trading day started: ", TimeToString(todayStart, TIME_DATE));
+   }
+   
+   // Capture London open price (once per day)
+   if(currentHour == LondonStartHour && currentMinute == 0 && !londonOpenCaptured)
+   {
+      londonOpen = iClose(_Symbol, PERIOD_M1, 1);
+      londonOpenCaptured = true;
+      Print("London Open captured: ", londonOpen, " on ", TimeToString(todayStart, TIME_DATE));
+   }
+   
+   // Capture London close and determine bias (once per day)
+   if(currentHour == LondonEndHour && currentMinute == 0 && londonOpenCaptured && !londonCloseCaptured)
+   {
+      londonClose = iClose(_Symbol, PERIOD_M1, 1);
+      londonCloseCaptured = true;
+      
+      // Calculate London range
+      double londonRange = MathAbs(londonClose - londonOpen) / pointValue;
+      
+      Print("London Close captured: ", londonClose);
+      Print("London Range: ", londonRange, " pips");
+      
+      // Determine bias if range is sufficient
+      if(londonRange >= MinLondonRangePips)
+      {
+         if(londonClose > londonOpen)
+         {
+            londonBullish = true;
+            Print("London BULLISH - Bias for NY: BUY");
+         }
+         else if(londonClose < londonOpen)
+         {
+            londonBearish = true;
+            Print("London BEARISH - Bias for NY: SELL");
+         }
+      }
+      else
+      {
+         Print("London range too small, no bias established");
+      }
+   }
+   
+   // NY Session Entry Logic - Check if we're in the entry window
+   int currentTimeMinutes = currentHour * 60 + currentMinute;
+   int nyEntryStart = NYStartHour * 60 + EntryDelayMinutes;
+   int nyEntryEnd = (NYStartHour + 1) * 60; // 1 hour window after NY open
+   
+   if(currentTimeMinutes >= nyEntryStart && currentTimeMinutes < nyEntryEnd && !tradeTakenToday)
+   {
+      if((londonBullish || londonBearish) && CountOpenPositions() == 0)
+      {
+         double currentPrice = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+         
+         // Bullish bias - Look for BUY
+         if(londonBullish)
+         {
+            bool confirmation = true;
+            
+            // Optional: Check if NY is confirming (price above London close)
+            if(UseConfirmation)
+            {
+               confirmation = currentPrice > londonClose;
+               if(!confirmation)
+               {
+                  Print("BUY confirmation failed: Price=", currentPrice, " LondonClose=", londonClose);
+               }
+            }
+            
+            if(confirmation)
+            {
+               Print("Executing BUY order at ", TimeToString(TimeCurrent(), TIME_DATE|TIME_MINUTES));
+               OpenBuyOrder();
+               tradeTakenToday = true;
+            }
+         }
+         // Bearish bias - Look for SELL
+         else if(londonBearish)
+         {
+            bool confirmation = true;
+            
+            // Optional: Check if NY is confirming (price below London close)
+            if(UseConfirmation)
+            {
+               confirmation = currentPrice < londonClose;
+               if(!confirmation)
+               {
+                  Print("SELL confirmation failed: Price=", currentPrice, " LondonClose=", londonClose);
+               }
+            }
+            
+            if(confirmation)
+            {
+               Print("Executing SELL order at ", TimeToString(TimeCurrent(), TIME_DATE|TIME_MINUTES));
+               OpenSellOrder();
+               tradeTakenToday = true;
+            }
+         }
+      }
+   }
+}
+
+//+------------------------------------------------------------------+
+//| Open Buy Order                                                   |
+//+------------------------------------------------------------------+
+void OpenBuyOrder()
+{
+   double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
+   double sl = ask - (StopLossPips * pointValue);
+   double tp = ask + (TakeProfitPips * pointValue);
+   
+   MqlTradeRequest request = {};
+   MqlTradeResult result = {};
+   
+   request.action = TRADE_ACTION_DEAL;
+   request.symbol = _Symbol;
+   request.volume = LotSize;
+   request.type = ORDER_TYPE_BUY;
+   request.price = ask;
+   request.sl = sl;
+   request.tp = tp;
+   request.deviation = 10;
+   request.magic = MagicNumber;
+   request.comment = "London-NY BUY";
+   
+   if(OrderSend(request, result))
+   {
+      Print("BUY Order opened successfully. Ticket: ", result.order);
+      Print("Entry: ", ask, " | SL: ", sl, " | TP: ", tp);
+   }
+   else
+   {
+      Print("BUY Order failed. Error: ", GetLastError());
+   }
+}
+
+//+------------------------------------------------------------------+
+//| Open Sell Order                                                  |
+//+------------------------------------------------------------------+
+void OpenSellOrder()
+{
+   double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+   double sl = bid + (StopLossPips * pointValue);
+   double tp = bid - (TakeProfitPips * pointValue);
+   
+   MqlTradeRequest request = {};
+   MqlTradeResult result = {};
+   
+   request.action = TRADE_ACTION_DEAL;
+   request.symbol = _Symbol;
+   request.volume = LotSize;
+   request.type = ORDER_TYPE_SELL;
+   request.price = bid;
+   request.sl = sl;
+   request.tp = tp;
+   request.deviation = 10;
+   request.magic = MagicNumber;
+   request.comment = "London-NY SELL";
+   
+   if(OrderSend(request, result))
+   {
+      Print("SELL Order opened successfully. Ticket: ", result.order);
+      Print("Entry: ", bid, " | SL: ", sl, " | TP: ", tp);
+   }
+   else
+   {
+      Print("SELL Order failed. Error: ", GetLastError());
+   }
+}
+
+//+------------------------------------------------------------------+
+//| Count Open Positions                                             |
+//+------------------------------------------------------------------+
+int CountOpenPositions()
+{
+   int count = 0;
+   for(int i = PositionsTotal() - 1; i >= 0; i--)
+   {
+      ulong ticket = PositionGetTicket(i);
+      if(PositionSelectByTicket(ticket))
+      {
+         if(PositionGetString(POSITION_SYMBOL) == _Symbol && 
+            PositionGetInteger(POSITION_MAGIC) == MagicNumber)
+         {
+            count++;
+         }
+      }
+   }
+   return count;
+}
+//+------------------------------------------------------------------+

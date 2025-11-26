@@ -1,0 +1,237 @@
+//+------------------------------------------------------------------+
+//|                                                         Gold.mql5 |
+//|                        Channel Breakout Strategy - Long Only     |
+//|                                                                  |
+//+------------------------------------------------------------------+
+#property copyright "Channel Breakout Strategy"
+#property link      ""
+#property version   "1.00"
+#property strict
+
+#include <Trade\Trade.mqh>
+
+CTrade trade;
+
+// Input Parameters
+input group "=== Channel Parameters ==="
+input int Length = 5;                  // Number of bars for channel calculation
+
+input group "=== Trailing Stop ==="
+input int AtrPeriod = 14;              // ATR Period
+input double AtrMultiplier = 2.0;      // ATR Multiplier for trailing stop
+
+input group "=== Stop Loss Options ==="
+input bool UseFixedStopLoss = false;   // Use Fixed Stop Loss ($ or %)
+input double StopLossAmount = 100.0;   // Stop Loss Amount ($)
+input bool UsePercentStopLoss = false; // Use Percent-Based Stop Loss
+input double StopLossPercent = 1.0;    // Stop Loss Percent of Entry Price
+
+input group "=== Exit Options ==="
+input bool UseChannelExit = true;      // Exit if price breaks below lower channel
+
+input group "=== Risk Management ==="
+input double LotSize = 0.1;            // Fixed Lot Size
+
+// Global Variables
+int atrHandle;
+double atrBuffer[];
+double trailingStopPrice = 0;
+bool positionOpen = false;
+
+//+------------------------------------------------------------------+
+//| Expert initialization function                                   |
+//+------------------------------------------------------------------+
+int OnInit()
+{
+   // Initialize ATR indicator
+   atrHandle = iATR(_Symbol, PERIOD_CURRENT, AtrPeriod);
+   if(atrHandle == INVALID_HANDLE)
+   {
+      Print("Failed to create ATR indicator");
+      return(INIT_FAILED);
+   }
+   
+   ArraySetAsSeries(atrBuffer, true);
+   
+   Print("Channel Breakout Strategy (Long Only) Initialized");
+   Print("Length: ", Length, " | ATR Period: ", AtrPeriod, " | ATR Multiplier: ", AtrMultiplier);
+   
+   return(INIT_SUCCEEDED);
+}
+
+//+------------------------------------------------------------------+
+//| Expert deinitialization function                                 |
+//+------------------------------------------------------------------+
+void OnDeinit(const int reason)
+{
+   if(atrHandle != INVALID_HANDLE)
+      IndicatorRelease(atrHandle);
+   
+   Print("Channel Breakout Strategy Deinitialized");
+}
+
+//+------------------------------------------------------------------+
+//| Expert tick function                                             |
+//+------------------------------------------------------------------+
+void OnTick()
+{
+   // Wait for enough bars
+   if(Bars(_Symbol, PERIOD_CURRENT) < MathMax(Length, AtrPeriod) + 1)
+      return;
+   
+   // Copy ATR values
+   if(CopyBuffer(atrHandle, 0, 0, 3, atrBuffer) < 3)
+      return;
+   
+   // Calculate channel bounds
+   double upBound = GetHighest(Length);
+   double downBound = GetLowest(Length);
+   
+   if(upBound == 0 || downBound == 0)
+      return;
+   
+   // Check if we have an open position
+   positionOpen = (PositionSelect(_Symbol) && PositionGetInteger(POSITION_TYPE) == POSITION_TYPE_BUY);
+   
+   // Entry logic - Long only
+   if(!positionOpen)
+   {
+      double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
+      
+      // Breakout above upper channel
+      if(ask > upBound)
+      {
+         OpenLongPosition(ask, downBound);
+      }
+   }
+   else
+   {
+      // Position management
+      ManageLongPosition(downBound);
+   }
+}
+
+//+------------------------------------------------------------------+
+//| Get highest high over N bars                                     |
+//+------------------------------------------------------------------+
+double GetHighest(int bars)
+{
+   double highest = 0;
+   for(int i = 1; i <= bars; i++)
+   {
+      double high = iHigh(_Symbol, PERIOD_CURRENT, i);
+      if(high > highest)
+         highest = high;
+   }
+   return highest;
+}
+
+//+------------------------------------------------------------------+
+//| Get lowest low over N bars                                       |
+//+------------------------------------------------------------------+
+double GetLowest(int bars)
+{
+   double lowest = DBL_MAX;
+   for(int i = 1; i <= bars; i++)
+   {
+      double low = iLow(_Symbol, PERIOD_CURRENT, i);
+      if(low < lowest)
+         lowest = low;
+   }
+   return lowest;
+}
+
+//+------------------------------------------------------------------+
+//| Open Long Position                                                |
+//+------------------------------------------------------------------+
+void OpenLongPosition(double price, double channelLow)
+{
+   double sl = 0;
+   double tp = 0;
+   
+   // Calculate Stop Loss
+   if(UsePercentStopLoss)
+   {
+      // Percent-based stop loss
+      sl = price - (price * StopLossPercent / 100.0);
+   }
+   else if(UseFixedStopLoss)
+   {
+      // Convert dollar amount to price distance
+      double tickValue = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_VALUE);
+      double tickSize = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_SIZE);
+      double slDistance = (StopLossAmount / tickValue) * tickSize;
+      sl = price - slDistance;
+   }
+   else
+   {
+      // Use ATR-based trailing stop
+      sl = price - (atrBuffer[0] * AtrMultiplier);
+      trailingStopPrice = sl;
+   }
+   
+   // No fixed TP - will trail or use channel exit
+   tp = 0;
+   
+   if(trade.Buy(LotSize, _Symbol, price, sl, tp, "Channel Breakout Long"))
+   {
+      Print("Long position opened at ", price, " | SL: ", sl, " | Lots: ", LotSize);
+      if(UsePercentStopLoss)
+         Print("Percent-based SL: ", StopLossPercent, "% (", price - sl, " points)");
+      else if(UseFixedStopLoss)
+         Print("Fixed dollar SL: $", StopLossAmount);
+      else
+         Print("ATR Trailing Stop initialized at ", trailingStopPrice);
+   }
+   else
+   {
+      Print("Failed to open long position. Error: ", GetLastError());
+   }
+}
+
+//+------------------------------------------------------------------+
+//| Manage Long Position                                             |
+//+------------------------------------------------------------------+
+void ManageLongPosition(double channelLow)
+{
+   if(!PositionSelect(_Symbol))
+      return;
+   
+   double currentPrice = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+   double currentSL = PositionGetDouble(POSITION_SL);
+   double currentTP = PositionGetDouble(POSITION_TP);
+   ulong ticket = PositionGetInteger(POSITION_TICKET);
+   
+   // Channel-based exit
+   if(UseChannelExit && currentPrice < channelLow)
+   {
+      if(trade.PositionClose(ticket))
+      {
+         Print("Position closed - Price broke below channel: ", currentPrice, " < ", channelLow);
+         trailingStopPrice = 0;
+      }
+      return;
+   }
+   
+   // ATR Trailing Stop (only if not using fixed or percent stop loss)
+   if(!UseFixedStopLoss && !UsePercentStopLoss)
+   {
+      double newTrailingStop = currentPrice - (atrBuffer[0] * AtrMultiplier);
+      
+      // Only move trailing stop up, never down
+      if(newTrailingStop > trailingStopPrice)
+      {
+         trailingStopPrice = newTrailingStop;
+         
+         // Update stop loss if new trailing stop is higher than current SL
+         if(trailingStopPrice > currentSL)
+         {
+            if(trade.PositionModify(ticket, trailingStopPrice, currentTP))
+            {
+               Print("Trailing stop updated to ", trailingStopPrice);
+            }
+         }
+      }
+   }
+}
+//+------------------------------------------------------------------+

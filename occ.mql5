@@ -1,0 +1,291 @@
+//+------------------------------------------------------------------+
+//|                                                          occ.mql5 |
+//|                        Open Close Cross Strategy R5.1 for MQL5   |
+//|                                   Converted from Pine Script v3  |
+//+------------------------------------------------------------------+
+#property copyright "Original: JayRogers, Revised: JustUncleL, Converted to MQL5"
+#property link      ""
+#property version   "1.00"
+#property description "Open Close Cross Strategy - trades MA crossovers of open/close"
+
+#include <Trade\Trade.mqh>
+
+//--- Input parameters
+input group "=== Resolution Settings ==="
+input bool     UseAlternateRes = true;              // Use Alternate Timeframe?
+input int      TimeframeMultiplier = 3;             // Multiplier for Alternate Timeframe
+input ENUM_TIMEFRAMES AlternateTimeframe = PERIOD_CURRENT; // Alternate Timeframe (if multiplier doesn't work)
+
+input group "=== Moving Average Settings ==="
+input ENUM_MA_METHOD MAType = MODE_SMMA;            // MA Type
+input int      MAPeriod = 8;                        // MA Period
+input int      DelayOffset = 0;                     // Delay Open/Close MA (Non-Repainting)
+
+input group "=== Trade Settings ==="
+input string   TradeType = "BOTH";                  // Trade Type: LONG, SHORT, BOTH, NONE
+input double   LotSize = 0.1;                       // Lot Size
+input int      StopLossPoints = 0;                  // Stop Loss in Points (0=disabled)
+input int      TakeProfitPoints = 0;                // Take Profit in Points (0=disabled)
+input int      Slippage = 10;                       // Slippage in Points
+
+input group "=== Risk Management ==="
+input int      MagicNumber = 20241123;              // Magic Number
+input string   TradeComment = "OCC_Strategy";       // Trade Comment
+
+//--- Global variables
+CTrade trade;
+int closeMAHandle = INVALID_HANDLE;
+int openMAHandle = INVALID_HANDLE;
+double closeMA[], openMA[];
+ENUM_TIMEFRAMES workingTimeframe;
+datetime lastBarTime = 0;
+bool isLongOpen = false;
+bool isShortOpen = false;
+
+//+------------------------------------------------------------------+
+//| Expert initialization function                                   |
+//+------------------------------------------------------------------+
+int OnInit()
+{
+   // Set trade parameters
+   trade.SetExpertMagicNumber(MagicNumber);
+   trade.SetDeviationInPoints(Slippage);
+   trade.SetTypeFilling(ORDER_FILLING_FOK);
+   trade.SetAsyncMode(false);
+   
+   // Determine working timeframe
+   if(UseAlternateRes && TimeframeMultiplier > 1)
+   {
+      int currentTF = PeriodSeconds(_Period);
+      int alternateTF = currentTF * TimeframeMultiplier;
+      workingTimeframe = GetTimeframeFromSeconds(alternateTF);
+   }
+   else if(UseAlternateRes && AlternateTimeframe != PERIOD_CURRENT)
+   {
+      workingTimeframe = AlternateTimeframe;
+   }
+   else
+   {
+      workingTimeframe = _Period;
+   }
+   
+   Print("Working Timeframe: ", EnumToString(workingTimeframe));
+   
+   // Create MA indicators for close prices
+   closeMAHandle = iMA(_Symbol, workingTimeframe, MAPeriod, 0, MAType, PRICE_CLOSE);
+   if(closeMAHandle == INVALID_HANDLE)
+   {
+      Print("Error creating Close MA indicator: ", GetLastError());
+      return(INIT_FAILED);
+   }
+   
+   // Create MA indicators for open prices
+   openMAHandle = iMA(_Symbol, workingTimeframe, MAPeriod, 0, MAType, PRICE_OPEN);
+   if(openMAHandle == INVALID_HANDLE)
+   {
+      Print("Error creating Open MA indicator: ", GetLastError());
+      return(INIT_FAILED);
+   }
+   
+   // Set array as series
+   ArraySetAsSeries(closeMA, true);
+   ArraySetAsSeries(openMA, true);
+   
+   Print("OCC Strategy initialized successfully");
+   return(INIT_SUCCEEDED);
+}
+
+//+------------------------------------------------------------------+
+//| Expert deinitialization function                                 |
+//+------------------------------------------------------------------+
+void OnDeinit(const int reason)
+{
+   if(closeMAHandle != INVALID_HANDLE)
+      IndicatorRelease(closeMAHandle);
+   if(openMAHandle != INVALID_HANDLE)
+      IndicatorRelease(openMAHandle);
+      
+   Print("OCC Strategy deinitialized. Reason: ", reason);
+}
+
+//+------------------------------------------------------------------+
+//| Expert tick function                                             |
+//+------------------------------------------------------------------+
+void OnTick()
+{
+   // Check if new bar on working timeframe
+   datetime currentBarTime = iTime(_Symbol, workingTimeframe, 0);
+   if(currentBarTime == lastBarTime)
+      return;
+   lastBarTime = currentBarTime;
+   
+   // Check if trading is allowed
+   if(TradeType == "NONE")
+      return;
+   
+   // Copy MA values
+   if(CopyBuffer(closeMAHandle, 0, DelayOffset, 3, closeMA) < 3)
+   {
+      Print("Error copying Close MA buffer: ", GetLastError());
+      return;
+   }
+   
+   if(CopyBuffer(openMAHandle, 0, DelayOffset, 3, openMA) < 3)
+   {
+      Print("Error copying Open MA buffer: ", GetLastError());
+      return;
+   }
+   
+   // Check current position status
+   UpdatePositionStatus();
+   
+   // Detect crossovers
+   bool xlong = (closeMA[1] > openMA[1]) && (closeMA[2] <= openMA[2]);   // Crossover
+   bool xshort = (closeMA[1] < openMA[1]) && (closeMA[2] >= openMA[2]);  // Crossunder
+   
+   // Execute trades based on signals
+   if(xlong && TradeType != "SHORT")
+   {
+      if(isShortOpen)
+         ClosePosition(POSITION_TYPE_SELL);
+      if(!isLongOpen)
+         OpenPosition(ORDER_TYPE_BUY);
+   }
+   
+   if(xshort && TradeType != "LONG")
+   {
+      if(isLongOpen)
+         ClosePosition(POSITION_TYPE_BUY);
+      if(!isShortOpen)
+         OpenPosition(ORDER_TYPE_SELL);
+   }
+}
+
+//+------------------------------------------------------------------+
+//| Update position status                                            |
+//+------------------------------------------------------------------+
+void UpdatePositionStatus()
+{
+   isLongOpen = false;
+   isShortOpen = false;
+   
+   for(int i = PositionsTotal() - 1; i >= 0; i--)
+   {
+      ulong ticket = PositionGetTicket(i);
+      if(ticket > 0)
+      {
+         if(PositionGetString(POSITION_SYMBOL) == _Symbol && 
+            PositionGetInteger(POSITION_MAGIC) == MagicNumber)
+         {
+            ENUM_POSITION_TYPE posType = (ENUM_POSITION_TYPE)PositionGetInteger(POSITION_TYPE);
+            if(posType == POSITION_TYPE_BUY)
+               isLongOpen = true;
+            else if(posType == POSITION_TYPE_SELL)
+               isShortOpen = true;
+         }
+      }
+   }
+}
+
+//+------------------------------------------------------------------+
+//| Open position                                                     |
+//+------------------------------------------------------------------+
+void OpenPosition(ENUM_ORDER_TYPE orderType)
+{
+   double price = (orderType == ORDER_TYPE_BUY) ? SymbolInfoDouble(_Symbol, SYMBOL_ASK) : SymbolInfoDouble(_Symbol, SYMBOL_BID);
+   double sl = 0, tp = 0;
+   
+   // Calculate SL and TP
+   if(StopLossPoints > 0 || TakeProfitPoints > 0)
+   {
+      double point = SymbolInfoDouble(_Symbol, SYMBOL_POINT);
+      int digits = (int)SymbolInfoInteger(_Symbol, SYMBOL_DIGITS);
+      
+      if(orderType == ORDER_TYPE_BUY)
+      {
+         if(StopLossPoints > 0)
+            sl = NormalizeDouble(price - StopLossPoints * point, digits);
+         if(TakeProfitPoints > 0)
+            tp = NormalizeDouble(price + TakeProfitPoints * point, digits);
+      }
+      else
+      {
+         if(StopLossPoints > 0)
+            sl = NormalizeDouble(price + StopLossPoints * point, digits);
+         if(TakeProfitPoints > 0)
+            tp = NormalizeDouble(price - TakeProfitPoints * point, digits);
+      }
+   }
+   
+   // Execute trade
+   bool result = false;
+   if(orderType == ORDER_TYPE_BUY)
+      result = trade.Buy(LotSize, _Symbol, price, sl, tp, TradeComment);
+   else
+      result = trade.Sell(LotSize, _Symbol, price, sl, tp, TradeComment);
+   
+   if(result)
+   {
+      Print("Position opened: ", EnumToString(orderType), " at ", price);
+   }
+   else
+   {
+      Print("Error opening position: ", trade.ResultRetcode(), " - ", trade.ResultRetcodeDescription());
+   }
+}
+
+//+------------------------------------------------------------------+
+//| Close position                                                    |
+//+------------------------------------------------------------------+
+void ClosePosition(ENUM_POSITION_TYPE posType)
+{
+   for(int i = PositionsTotal() - 1; i >= 0; i--)
+   {
+      ulong ticket = PositionGetTicket(i);
+      if(ticket > 0)
+      {
+         if(PositionGetString(POSITION_SYMBOL) == _Symbol && 
+            PositionGetInteger(POSITION_MAGIC) == MagicNumber &&
+            PositionGetInteger(POSITION_TYPE) == posType)
+         {
+            if(trade.PositionClose(ticket))
+            {
+               Print("Position closed: ", ticket);
+            }
+            else
+            {
+               Print("Error closing position: ", trade.ResultRetcode());
+            }
+         }
+      }
+   }
+}
+
+//+------------------------------------------------------------------+
+//| Get timeframe from seconds                                        |
+//+------------------------------------------------------------------+
+ENUM_TIMEFRAMES GetTimeframeFromSeconds(int seconds)
+{
+   if(seconds <= 60) return PERIOD_M1;
+   if(seconds <= 120) return PERIOD_M2;
+   if(seconds <= 180) return PERIOD_M3;
+   if(seconds <= 240) return PERIOD_M4;
+   if(seconds <= 300) return PERIOD_M5;
+   if(seconds <= 360) return PERIOD_M6;
+   if(seconds <= 600) return PERIOD_M10;
+   if(seconds <= 720) return PERIOD_M12;
+   if(seconds <= 900) return PERIOD_M15;
+   if(seconds <= 1200) return PERIOD_M20;
+   if(seconds <= 1800) return PERIOD_M30;
+   if(seconds <= 3600) return PERIOD_H1;
+   if(seconds <= 7200) return PERIOD_H2;
+   if(seconds <= 10800) return PERIOD_H3;
+   if(seconds <= 14400) return PERIOD_H4;
+   if(seconds <= 21600) return PERIOD_H6;
+   if(seconds <= 28800) return PERIOD_H8;
+   if(seconds <= 43200) return PERIOD_H12;
+   if(seconds <= 86400) return PERIOD_D1;
+   if(seconds <= 604800) return PERIOD_W1;
+   return PERIOD_MN1;
+}
+//+------------------------------------------------------------------+

@@ -1,0 +1,446 @@
+//+------------------------------------------------------------------+
+//|                                   MultiSymbolCryptoEdge_DualEMA.mq5
+//|                                                     Copyright 2025
+//+------------------------------------------------------------------+
+#property copyright "Copyright 2025"
+#property version   "1.21"
+#property strict
+
+#include <Trade\Trade.mqh>
+#include <StdLibErr.mqh>   // keep if available; harmless if not used
+
+//==================== INPUTS ====================//
+// Symbols
+input string   TradeSymbols             = "BTCUSD|XAUUSD|USDJPY"; // Symbol(s) or ALL or CURRENT
+// Dual EMA Trend Filter
+input int      Fast_Trend               = 50;     // Fast EMA length
+input int      SlowTrend                = 200;    // Slow EMA length
+input bool     UseDualEMATrendFilter    = true;   // Require Fast>Slow for longs, Fast<Slow for shorts
+// Breakout & Risk
+input int      BreakoutBars             = 3;      // Breakout lookback bars (before last closed)
+input int      StopLossBars             = 5;      // SL lookback bars (confirmed candles)
+input double   RiskPerTrade             = 0.01;   // Risk per trade (% of equity)
+// Positioning
+input bool     AllowMultiplePositions   = true;   // Pyramiding
+input int      MaxPositions             = 5;      // Max positions per symbol
+// Sides
+input bool     EnableLongs              = true;   // Allow long entries
+input bool     EnableShorts             = true;   // Allow short entries
+// Take Profit
+input bool     UseTakeProfitRR          = false;  // Enable Take Profit based on Risk-Reward
+input double   TakeProfitRR             = 2.0;    // Take Profit Risk-Reward ratio (e.g., 2.0 = 2R)
+
+// ======== WEEKEND PROTECTION ========
+input bool     EnableWeekendProtection  = false;  // Close before weekend & block new entries
+input int      FridayCloseHour          = 21;     // Server time hour [0..23] to close on Friday
+
+//==================== GLOBALS ====================//
+string   AllSymbolsString           = "BTCUSD|XAUUSD|USDJPY";
+int      NumberOfTradeableSymbols   = 0;
+string   SymbolArray[];
+int      TicksReceivedCount         = 0;
+
+int      handle_EMA_Fast[];
+int      handle_EMA_Slow[];
+
+ulong    OpenTradeOrderTicket[];
+int      OpenPositionCount[];
+datetime LastClosedCandleTime[];
+
+CTrade   trade;
+
+//==================== INIT ====================//
+int OnInit()
+{
+   // Resolve symbols
+   if(TradeSymbols=="CURRENT")
+   {
+      NumberOfTradeableSymbols = 1;
+      ArrayResize(SymbolArray,1);
+      SymbolArray[0] = Symbol();
+      Print("EA will process ", SymbolArray[0], " only");
+   }
+   else
+   {
+      string useList = (TradeSymbols=="ALL") ? AllSymbolsString : TradeSymbols;
+      NumberOfTradeableSymbols = StringSplit(useList, '|', SymbolArray);
+      if(NumberOfTradeableSymbols<1) { Print("No symbols provided."); return INIT_FAILED; }
+      Print("EA will process: ", useList);
+   }
+
+   ResizeCoreArrays();
+   ResizeIndicatorHandleArrays();
+
+   for(int i=0;i<NumberOfTradeableSymbols;i++)
+   {
+      OpenTradeOrderTicket[i]=0;
+      OpenPositionCount[i]=0;
+      LastClosedCandleTime[i]=0;
+      SymbolSelect(SymbolArray[i], true);
+   }
+
+   if(!SetUpIndicatorHandles())
+      return(INIT_FAILED);
+
+   trade.SetExpertMagicNumber(260152);
+   return(INIT_SUCCEEDED);
+}
+
+void OnDeinit(const int reason)
+{
+   for(int i=0;i<NumberOfTradeableSymbols;i++)
+   {
+      if(handle_EMA_Fast[i]!=INVALID_HANDLE) IndicatorRelease(handle_EMA_Fast[i]);
+      if(handle_EMA_Slow[i]!=INVALID_HANDLE) IndicatorRelease(handle_EMA_Slow[i]);
+   }
+   Comment("\n\rMulti-Symbol CryptoEdge EA Stopped");
+}
+
+//==================== WEEKEND HELPERS (FIXED) ====================//
+bool IsFridayCutoffReached()
+{
+   if(!EnableWeekendProtection) return false;
+
+   MqlDateTime ts;
+   TimeToStruct(TimeCurrent(), ts);       // server time -> struct
+
+   // day_of_week: 0=Sun,1=Mon,...,5=Fri,6=Sat
+   int cutoff = MathMax(0, MathMin(23, FridayCloseHour));
+   return (ts.day_of_week == 5 && ts.hour >= cutoff);
+}
+bool IsWeekendNow()
+{
+   if(!EnableWeekendProtection) return false;
+
+   MqlDateTime ts;
+   TimeToStruct(TimeCurrent(), ts);
+
+   return (ts.day_of_week == 6 || ts.day_of_week == 0); // Sat or Sun
+}
+void CloseAllPositionsForSymbol(const string sym)
+{
+   // In netting mode there can be at most one position per symbol.
+   trade.PositionClose(sym);   // safe to try even if none exists
+}
+
+//==================== TICK ====================//
+void OnTick()
+{
+   if(!TerminalInfoInteger(TERMINAL_TRADE_ALLOWED))
+   {
+      Print("Trading not allowed!");
+      return;
+   }
+
+   TicksReceivedCount++;
+   string indicatorMetrics = "";
+
+   // Weekend protection gate
+   bool weekendBlock = EnableWeekendProtection && (IsFridayCutoffReached() || IsWeekendNow());
+   if(weekendBlock)
+   {
+      for(int s=0; s<NumberOfTradeableSymbols; s++)
+         CloseAllPositionsForSymbol(SymbolArray[s]);
+      // New entries are blocked below; trailing is also skipped while blocked.
+   }
+
+   for(int s=0; s<NumberOfTradeableSymbols; s++)
+   {
+      string sym = SymbolArray[s];
+
+      if(!UpdateData(s)) continue;
+
+      OpenPositionCount[s] = GetPositionCount(sym);
+
+      MqlRates rr[]; ArraySetAsSeries(rr,true);
+      if(CopyRates(sym, Period(), 0, 2, rr) < 2) continue;
+
+      if(rr[1].time != LastClosedCandleTime[s])
+      {
+         LastClosedCandleTime[s] = rr[1].time;
+
+         double fastEMA = GetEMAValue(handle_EMA_Fast[s], sym, 1);
+         double slowEMA = GetEMAValue(handle_EMA_Slow[s], sym, 1);
+
+         indicatorMetrics += StringFormat("%s  |  FastEMA=%.*f  SlowEMA=%.*f  POS=%d\n\r",
+            sym,
+            (int)SymbolInfoInteger(sym, SYMBOL_DIGITS), fastEMA,
+            (int)SymbolInfoInteger(sym, SYMBOL_DIGITS), slowEMA,
+            OpenPositionCount[s]);
+
+         if(!weekendBlock)
+         {
+            bool canAdd = (AllowMultiplePositions ? (OpenPositionCount[s] < MaxPositions) : (OpenPositionCount[s]==0));
+            if(canAdd) CheckForEntry(s, fastEMA, slowEMA);
+
+            if(OpenPositionCount[s] > 0)
+               ManagePositions(s);
+         }
+      }
+   }
+
+   if(!MQLInfoInteger(MQL_TESTER))
+      OutputStatusToChart(indicatorMetrics);
+}
+
+//==================== ARRAYS & HANDLES ====================//
+void ResizeCoreArrays()
+{
+   ArrayResize(OpenTradeOrderTicket, NumberOfTradeableSymbols);
+   ArrayResize(OpenPositionCount, NumberOfTradeableSymbols);
+   ArrayResize(LastClosedCandleTime, NumberOfTradeableSymbols);
+}
+void ResizeIndicatorHandleArrays()
+{
+   ArrayResize(handle_EMA_Fast, NumberOfTradeableSymbols);
+   ArrayResize(handle_EMA_Slow, NumberOfTradeableSymbols);
+}
+bool SetUpIndicatorHandles()
+{
+   for(int i=0;i<NumberOfTradeableSymbols;i++)
+   {
+      ResetLastError();
+      handle_EMA_Fast[i] = iMA(SymbolArray[i], Period(), Fast_Trend, 0, MODE_EMA, PRICE_CLOSE);
+      if(handle_EMA_Fast[i]==INVALID_HANDLE)
+      {
+         string msg = (GetLastError()==4302) ? "Symbol needs to be added to MarketWatch" : StringFormat("(error %d)",GetLastError());
+         MessageBox("Failed to create FAST EMA for "+SymbolArray[i]+"/"+EnumToString(Period())+"\n\r"+msg+"\n\rEA will now terminate.");
+         return false;
+      }
+      handle_EMA_Slow[i] = iMA(SymbolArray[i], Period(), SlowTrend, 0, MODE_EMA, PRICE_CLOSE);
+      if(handle_EMA_Slow[i]==INVALID_HANDLE)
+      {
+         string msg2 = (GetLastError()==4302) ? "Symbol needs to be added to MarketWatch" : StringFormat("(error %d)",GetLastError());
+         MessageBox("Failed to create SLOW EMA for "+SymbolArray[i]+"/"+EnumToString(Period())+"\n\r"+msg2+"\n\rEA will now terminate.");
+         return false;
+      }
+      Print("EMA handles OK for ", SymbolArray[i], " / ", EnumToString(Period()));
+   }
+   return true;
+}
+
+//==================== DATA HELPERS ====================//
+bool UpdateData(int sIdx)
+{
+   // Soft readiness checks (don’t block; just avoid using empty buffers)
+   if(BarsCalculated(handle_EMA_Fast[sIdx]) < Fast_Trend+5) return true;
+   if(BarsCalculated(handle_EMA_Slow[sIdx]) < SlowTrend+5) return true;
+   return true;
+}
+
+double GetEMAValue(int handle, string symbol, int shift)
+{
+   double buf[]; ArraySetAsSeries(buf,true);
+   int need = shift+1;
+   int got = CopyBuffer(handle, 0, 0, need, buf);
+   if(got < need)
+   {
+      Print("EMA buffer short for ", symbol, ": need ", need, " got ", got, " err=", GetLastError());
+      return 0.0;
+   }
+   return buf[shift];
+}
+
+//==================== ENTRIES ====================//
+void CheckForEntry(int sIdx, double fastEMA, double slowEMA)
+{
+   string sym = SymbolArray[sIdx];
+
+   int needBars = MathMax(BreakoutBars+3, StopLossBars+2);
+   MqlRates r[]; ArraySetAsSeries(r,true);
+   if(CopyRates(sym, Period(), 0, needBars, r) < needBars) return;
+
+   double cClose = r[1].close;
+
+   bool upTrend   = fastEMA > slowEMA;
+   bool downTrend = fastEMA < slowEMA;
+
+   // ---------- LONG ----------
+   if(EnableLongs)
+   {
+      double highestHigh = r[2].high;
+      for(int i=3; i<=BreakoutBars+1; i++) highestHigh = MathMax(highestHigh, r[i].high);
+
+      bool longBreakout = (cClose > highestHigh);
+      bool longTrendOk  = (!UseDualEMATrendFilter) ? (cClose > slowEMA) : (upTrend && cClose > slowEMA);
+
+      if(longBreakout && longTrendOk)
+      {
+         double sl = CalculateStopLoss(sym, true);
+         if(sl>0 && sl < cClose)
+         {
+            double size = CalculatePositionSize(sym, cClose, sl, true);
+            if(size>0)
+            {
+               double tp = 0.0;
+               if(UseTakeProfitRR)
+               {
+                  double risk = cClose - sl;
+                  tp = cClose + (risk * TakeProfitRR);
+               }
+               PrintFormat("LONG %s: size=%.2f entry=%.5f SL=%.5f TP=%.5f", sym, size, cClose, sl, tp);
+               if(!trade.Buy(size, sym, 0.0, sl, tp, "Multi CryptoEdge"))
+                  PrintFormat("Buy failed for %s. Error: %d", sym, GetLastError());
+               else
+                  OpenPositionCount[sIdx]++;
+            }
+         }
+      }
+   }
+
+   // ---------- SHORT ----------
+   if(EnableShorts)
+   {
+      double lowestLow = r[2].low;
+      for(int i=3; i<=BreakoutBars+1; i++) lowestLow = MathMin(lowestLow, r[i].low);
+
+      bool shortBreakout = (cClose < lowestLow);
+      bool shortTrendOk  = (!UseDualEMATrendFilter) ? (cClose < slowEMA) : (downTrend && cClose < slowEMA);
+
+      if(shortBreakout && shortTrendOk)
+      {
+         double sl = CalculateStopLoss(sym, false);
+         if(sl>0 && sl > cClose)
+         {
+            double size = CalculatePositionSize(sym, cClose, sl, false);
+            if(size>0)
+            {
+               double tp = 0.0;
+               if(UseTakeProfitRR)
+               {
+                  double risk = sl - cClose;
+                  tp = cClose - (risk * TakeProfitRR);
+               }
+               PrintFormat("SHORT %s: size=%.2f entry=%.5f SL=%.5f TP=%.5f", sym, size, cClose, sl, tp);
+               if(!trade.Sell(size, sym, 0.0, sl, tp, "Multi CryptoEdge"))
+                  PrintFormat("Sell failed for %s. Error: %d", sym, GetLastError());
+               else
+                  OpenPositionCount[sIdx]++;
+            }
+         }
+      }
+   }
+}
+
+//==================== STOPS & SIZING ====================//
+double CalculateStopLoss(string symbol, bool isLong)
+{
+   MqlRates r[]; ArraySetAsSeries(r,true);
+   int need = StopLossBars + 1;
+   if(CopyRates(symbol, Period(), 0, need, r) < need) return 0.0;
+
+   if(isLong)
+   {
+      double lowest = r[1].low;
+      for(int i=1;i<=StopLossBars;i++) lowest = MathMin(lowest, r[i].low);
+      return lowest;
+   }
+   else
+   {
+      double highest = r[1].high;
+      for(int i=1;i<=StopLossBars;i++) highest = MathMax(highest, r[i].high);
+      return highest;
+   }
+}
+
+double CalculatePositionSize(string symbol, double entryPrice, double stopLoss, bool isLong)
+{
+   if( (isLong && !(stopLoss < entryPrice)) || (!isLong && !(stopLoss > entryPrice)) )
+   {
+      Print("Stop distance invalid for ", symbol);
+      return 0.0;
+   }
+
+   double equity     = AccountInfoDouble(ACCOUNT_EQUITY);
+   double riskAmount = equity * RiskPerTrade;
+
+   double tickValue  = SymbolInfoDouble(symbol, SYMBOL_TRADE_TICK_VALUE);
+   double tickSize   = SymbolInfoDouble(symbol, SYMBOL_TRADE_TICK_SIZE);
+
+   if(tickValue<=0 || tickSize<=0) { Print("Invalid tick metrics for ", symbol); return 0.0; }
+
+   double distance   = (isLong ? (entryPrice - stopLoss) : (stopLoss - entryPrice));
+   double ticks      = distance / tickSize;
+   if(ticks <= 0.0) return 0.0;
+
+   double volume     = riskAmount / (ticks * tickValue);
+
+   double minLot = SymbolInfoDouble(symbol, SYMBOL_VOLUME_MIN);
+   double maxLot = SymbolInfoDouble(symbol, SYMBOL_VOLUME_MAX);
+   double stepLot= SymbolInfoDouble(symbol, SYMBOL_VOLUME_STEP);
+
+   volume = MathFloor(volume / stepLot) * stepLot;
+   volume = MathMax(minLot, MathMin(maxLot, volume));
+
+   return volume;
+}
+
+//==================== MANAGEMENT ====================//
+void ManagePositions(int sIdx)
+{
+   string sym = SymbolArray[sIdx];
+
+   double newLongSL  = CalculateStopLoss(sym, true);
+   double newShortSL = CalculateStopLoss(sym, false);
+
+   for(int i=0;i<PositionsTotal();i++)
+   {
+      ulong ticket = PositionGetTicket(i);
+      if(!PositionSelectByTicket(ticket)) continue;
+      if(PositionGetString(POSITION_SYMBOL) != sym) continue;
+
+      long pType = (long)PositionGetInteger(POSITION_TYPE);
+      double curSL = PositionGetDouble(POSITION_SL);
+      double curPrice = PositionGetDouble(POSITION_PRICE_CURRENT);
+
+      if(pType==POSITION_TYPE_BUY)
+      {
+         // Move SL up only, keep it below current price
+         if( (curSL==0.0 && newLongSL < curPrice) || (newLongSL > curSL && newLongSL < curPrice) )
+         {
+            if(!trade.PositionModify(sym, newLongSL, 0.0))
+               PrintFormat("Modify SL long failed %s err=%d", sym, GetLastError());
+         }
+      }
+      else if(pType==POSITION_TYPE_SELL)
+      {
+         // Move SL down only, keep it above current price
+         if( (curSL==0.0 && newShortSL > curPrice) || (newShortSL < curSL && newShortSL > curPrice) )
+         {
+            if(!trade.PositionModify(sym, newShortSL, 0.0))
+               PrintFormat("Modify SL short failed %s err=%d", sym, GetLastError());
+         }
+      }
+   }
+}
+
+//==================== UTILS ====================//
+int GetPositionCount(string symbol)
+{
+   int count=0;
+   for(int i=0;i<PositionsTotal();i++)
+   {
+      ulong ticket = PositionGetTicket(i);
+      if(PositionSelectByTicket(ticket) && PositionGetString(POSITION_SYMBOL)==symbol)
+         count++;
+   }
+   return count;
+}
+
+void OutputStatusToChart(string additional)
+{
+   double offsetH = (TimeCurrent() - TimeGMT())/3600.0;
+   string symbolsText = "SYMBOLS BEING TRADED:";
+   for(int i=0;i<NumberOfTradeableSymbols;i++)
+      symbolsText += " " + SymbolArray[i];
+
+   Comment(
+      "\n\rMT5 SERVER TIME: ", TimeToString(TimeCurrent(), TIME_DATE|TIME_SECONDS),
+      " (UTC/GMT", StringFormat("%+.1f", offsetH), ")\n\r\n\r",
+      "WeekendProt: ", (EnableWeekendProtection ? "ON" : "OFF"),
+      (EnableWeekendProtection ? StringFormat(" (Fri cutoff %02d:00)", MathMax(0, MathMin(23, FridayCloseHour))) : ""),
+      "\n\r\n\r", Symbol(), " TICKS RECEIVED: ", TicksReceivedCount, "\n\r\n\r",
+      symbolsText, "\n\r\n\r",
+      additional
+   );
+}

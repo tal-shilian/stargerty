@@ -1,0 +1,89 @@
+//@version=5
+strategy("VWAP Breakout Strategy", 
+     overlay=true, 
+     default_qty_type=strategy.fixed, 
+     initial_capital=10000,
+     commission_type=strategy.commission.cash_per_contract,
+     commission_value=2.5)
+
+// Input parameters
+positionSize = input.int(1, "Position Size", minval=1, tooltip="Number of contracts to trade")
+riskRewardMultiplier = input.int(10, "Risk-Reward Multiplier", minval=1, maxval=50, tooltip="Multiplier for the distance from stop loss to entry price for take profit")
+minStopDistance = input.float(0.5, "Minimum Stop Distance %", minval=0.1, maxval=5.0, tooltip="Minimum distance between entry and stop loss as percentage of entry price")
+
+// Session time filter
+useSessionFilter = input.bool(true, "Use Session Time Filter", tooltip="Only trade during specific session hours")
+sessionStart = input.session("0930-1600", "Trading Session", tooltip="Session hours for taking trades")
+
+// Calculate VWAP
+vwapValue = ta.vwap(hlc3)
+
+// Plot VWAP
+plot(vwapValue, "VWAP", color=color.blue, linewidth=2)
+
+// Variables to track trade state
+var bool tradeTaken = false
+var float breakoutCandleLow = na
+var float breakoutCandleHigh = na
+var float entryPrice = na
+var float stopLossPrice = na
+var float takeProfitPrice = na
+
+// Detect new session
+isNewSession = ta.change(time("D")) != 0
+
+// Reset trade flag at the start of a new session
+if isNewSession
+    tradeTaken := false
+
+// Check if we're flat (no position)
+isFlat = strategy.position_size == 0
+
+// Check if we're in the trading session
+inSession = useSessionFilter ? not na(time(timeframe.period, sessionStart)) : true
+
+// Long Trade: Check if the price closes above VWAP
+if close > vwapValue and isFlat and not tradeTaken and inSession
+    // Store breakout candle low for stop loss
+    breakoutCandleLow := low
+    stopLossPrice := breakoutCandleLow
+    entryPrice := close
+
+    // Calculate take profit: RiskRewardMultiplier times the distance from stop loss to entry
+    float distance = entryPrice - stopLossPrice
+    float minDistance = entryPrice * (minStopDistance / 100)
+
+    // Only enter if stop distance meets minimum requirement
+    if distance >= minDistance
+        takeProfitPrice := entryPrice + (riskRewardMultiplier * distance)
+
+        // Enter long position
+        strategy.entry("VWAP Long", strategy.long, qty=positionSize)
+        strategy.exit("Exit Long", "VWAP Long", stop=stopLossPrice, limit=takeProfitPrice)
+
+        // Set the flag that a trade has been taken
+        tradeTaken := true
+
+// Short Trade: Check if the price closes below VWAP
+if close < vwapValue and isFlat and not tradeTaken
+    // Store breakout candle high for stop loss
+    breakoutCandleHigh := high
+    stopLossPrice := breakoutCandleHigh
+    entryPrice := close
+    
+    // Calculate take profit: RiskRewardMultiplier times the distance from entry to stop loss
+    float distance = stopLossPrice - entryPrice
+    takeProfitPrice := entryPrice - (riskRewardMultiplier * distance)
+    
+    // Enter short position
+    strategy.entry("VWAP Short", strategy.short, qty=positionSize)
+    strategy.exit("Exit Short", "VWAP Short", stop=stopLossPrice, limit=takeProfitPrice)
+    
+    // Set the flag that a trade has been taken
+    tradeTaken := true
+
+// Visual markers for entries
+plotshape(close > vwapValue and isFlat and not tradeTaken[1] and tradeTaken, 
+     "Long Entry", shape.triangleup, location.belowbar, color.green, size=size.small)
+plotshape(close < vwapValue and isFlat and not tradeTaken[1] and tradeTaken, 
+     "Short Entry", shape.triangledown, location.abovebar, color.red, size=size.small)
