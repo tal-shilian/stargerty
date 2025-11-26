@@ -8,6 +8,45 @@
 
 #include <Trade\Trade.mqh>
 
+//--- Enums
+enum ENUM_PROFIT_TARGET
+{
+   PT_30 = 30,    // 30%
+   PT_35 = 35,    // 35%
+   PT_40 = 40,    // 40%
+   PT_45 = 45,    // 45%
+   PT_50 = 50,    // 50%
+   PT_55 = 55,    // 55%
+   PT_60 = 60,    // 60%
+   PT_65 = 65,    // 65%
+   PT_70 = 70,    // 70%
+   PT_75 = 75,    // 75%
+   PT_80 = 80,    // 80%
+   PT_85 = 85,    // 85%
+   PT_90 = 90,    // 90%
+   PT_95 = 95,    // 95%
+   PT_100 = 100   // 100%
+};
+
+enum ENUM_STOP_LOSS
+{
+   SL_30 = 30,    // 30%
+   SL_35 = 35,    // 35%
+   SL_40 = 40,    // 40%
+   SL_45 = 45,    // 45%
+   SL_50 = 50,    // 50%
+   SL_55 = 55,    // 55%
+   SL_60 = 60,    // 60%
+   SL_65 = 65,    // 65%
+   SL_70 = 70,    // 70%
+   SL_75 = 75,    // 75%
+   SL_80 = 80,    // 80%
+   SL_85 = 85,    // 85%
+   SL_90 = 90,    // 90%
+   SL_95 = 95,    // 95%
+   SL_100 = 100   // 100%
+};
+
 //--- Input Parameters
 input group "=== Range Settings ==="
 input int InpRangeMinutes = 15;              // Opening Range Duration (minutes)
@@ -15,61 +54,59 @@ input ENUM_TIMEFRAMES InpCandleTimeframe = PERIOD_M15;  // Candle Timeframe for 
 input int InpMaxTradesPerDay = 1;            // Max Trades Per Day
 
 input group "=== MONDAY ==="
-input bool InpTradeMonday = true;            // Trade on Monday
-input bool InpMondayBreakout = true;         // Trade ORB breakout
-input bool InpMondayBreakdown = true;        // Trade ORB breakdown
-input double InpMondayProfitTarget = 50.0;   // Profit target (% of ORB size)
-input double InpMondayStopLoss = 100.0;      // Stop loss (% of ORB size)
-input double InpMondayMinORBSize = 0.0;      // Min ORB size %
-input double InpMondayMaxORBSize = 0.5;      // Max ORB size %
+input bool InpTradeMonday = true;                        // Trade on Monday
+input bool InpMondayBreakout = true;                     // Trade ORB breakout
+input bool InpMondayBreakdown = true;                    // Trade ORB breakdown
+input ENUM_PROFIT_TARGET InpMondayProfitTarget = PT_50;  // Profit target (% of ORB size)
+input ENUM_STOP_LOSS InpMondayStopLoss = SL_100;         // Stop loss (% of ORB size)
+input double InpMondayMinORBSize = 0.0;                  // Min ORB size %
+input double InpMondayMaxORBSize = 0.6;                  // Max ORB size %
 
 input group "=== TUESDAY ==="
-input bool InpTradeTuesday = true;           // Trade on Tuesday
-input bool InpTuesdayBreakout = true;        // Trade ORB breakout
-input bool InpTuesdayBreakdown = true;       // Trade ORB breakdown
-input double InpTuesdayProfitTarget = 50.0;  // Profit target (% of ORB size)
-input double InpTuesdayStopLoss = 100.0;     // Stop loss (% of ORB size)
-input double InpTuesdayMinORBSize = 0.0;     // Min ORB size %
-input double InpTuesdayMaxORBSize = 0.5;     // Max ORB size %
+input bool InpTradeTuesday = true;                        // Trade on Tuesday
+input bool InpTuesdayBreakout = true;                     // Trade ORB breakout
+input bool InpTuesdayBreakdown = true;                    // Trade ORB breakdown
+input ENUM_PROFIT_TARGET InpTuesdayProfitTarget = PT_50;  // Profit target (% of ORB size)
+input ENUM_STOP_LOSS InpTuesdayStopLoss = SL_100;         // Stop loss (% of ORB size)
+input double InpTuesdayMinORBSize = 0.0;                  // Min ORB size %
+input double InpTuesdayMaxORBSize = 0.6;                  // Max ORB size %
 
 input group "=== WEDNESDAY ==="
-input bool InpTradeWednesday = true;         // Trade on Wednesday
-input bool InpWednesdayBreakout = true;      // Trade ORB breakout
-input bool InpWednesdayBreakdown = true;     // Trade ORB breakdown
-input double InpWednesdayProfitTarget = 50.0; // Profit target (% of ORB size)
-input double InpWednesdayStopLoss = 100.0;   // Stop loss (% of ORB size)
-input double InpWednesdayMinORBSize = 0.0;   // Min ORB size %
-input double InpWednesdayMaxORBSize = 0.5;   // Max ORB size %
+input bool InpTradeWednesday = true;                        // Trade on Wednesday
+input bool InpWednesdayBreakout = true;                     // Trade ORB breakout
+input bool InpWednesdayBreakdown = true;                    // Trade ORB breakdown
+input ENUM_PROFIT_TARGET InpWednesdayProfitTarget = PT_50;  // Profit target (% of ORB size)
+input ENUM_STOP_LOSS InpWednesdayStopLoss = SL_100;         // Stop loss (% of ORB size)
+input double InpWednesdayMinORBSize = 0.0;                  // Min ORB size %
+input double InpWednesdayMaxORBSize = 0.6;                  // Max ORB size %
 
 input group "=== THURSDAY ==="
-input bool InpTradeThursday = true;          // Trade on Thursday
-input bool InpThursdayBreakout = true;       // Trade ORB breakout
-input bool InpThursdayBreakdown = true;      // Trade ORB breakdown
-input double InpThursdayProfitTarget = 50.0; // Profit target (% of ORB size)
-input double InpThursdayStopLoss = 100.0;    // Stop loss (% of ORB size)
-input double InpThursdayMinORBSize = 0.0;    // Min ORB size %
-input double InpThursdayMaxORBSize = 0.5;    // Max ORB size %
+input bool InpTradeThursday = true;                        // Trade on Thursday
+input bool InpThursdayBreakout = true;                     // Trade ORB breakout
+input bool InpThursdayBreakdown = true;                    // Trade ORB breakdown
+input ENUM_PROFIT_TARGET InpThursdayProfitTarget = PT_50;  // Profit target (% of ORB size)
+input ENUM_STOP_LOSS InpThursdayStopLoss = SL_100;         // Stop loss (% of ORB size)
+input double InpThursdayMinORBSize = 0.0;                  // Min ORB size %
+input double InpThursdayMaxORBSize = 0.6;                  // Max ORB size %
 
 input group "=== FRIDAY ==="
-input bool InpTradeFriday = true;            // Trade on Friday
-input bool InpFridayBreakout = true;         // Trade ORB breakout
-input bool InpFridayBreakdown = true;        // Trade ORB breakdown
-input double InpFridayProfitTarget = 50.0;   // Profit target (% of ORB size)
-input double InpFridayStopLoss = 100.0;      // Stop loss (% of ORB size)
-input double InpFridayMinORBSize = 0.0;      // Min ORB size %
-input double InpFridayMaxORBSize = 0.5;      // Max ORB size %
+input bool InpTradeFriday = true;                        // Trade on Friday
+input bool InpFridayBreakout = true;                     // Trade ORB breakout
+input bool InpFridayBreakdown = true;                    // Trade ORB breakdown
+input ENUM_PROFIT_TARGET InpFridayProfitTarget = PT_50;  // Profit target (% of ORB size)
+input ENUM_STOP_LOSS InpFridayStopLoss = SL_100;         // Stop loss (% of ORB size)
+input double InpFridayMinORBSize = 0.0;                  // Min ORB size %
+input double InpFridayMaxORBSize = 0.6;                  // Max ORB size %
 
 input group "=== Filters ==="
-input bool InpUseEMA200Filter = true;        // Use EMA200 Filter
-input bool InpUseGapFilter = false;          // Use Gap Direction Filter
-input bool InpUseVolumeFilter = false;       // Use Volume Filter
-input int InpVolumePeriod = 20;              // Volume Average Period
+input double InpMaxSpread = 10.0;            // Max Spread (points, 0=disabled)
 
 input group "=== Risk Management ==="
 input double InpRiskPercent = 1.0;           // Risk Per Trade (% of account)
 input double InpMaxLossPerTrade = 0.0;       // Max Loss Per Trade (0=disabled, in account currency)
 input double InpTP1Percent = 40.0;           // TP1 (% of ORB size)
-input double InpTP1PositionPercent = 50.0;   // TP1 Position Size (% to close)
+input double InpTP1ClosePercent = 50.0;      // TP1 Close Size (% of position to close)
+input double InpTP2Percent = 80.0;           // TP2 (% of ORB size)
 input int InpMaxSlippagePoints = 10;         // Max Slippage (points)
 
 input group "=== Time Settings ==="
@@ -79,21 +116,41 @@ input bool InpUseTimeBasedClose = true;      // Use Time-Based Position Close
 input int InpCloseHour = 15;                 // Close All Positions Hour
 input int InpCloseMinute = 45;               // Close All Positions Minute
 
-input group "=== EMA Settings ==="
-input int InpEMA200Period = 200;             // EMA200 Period
+
 
 //--- Global Variables
 CTrade trade;
 double rangeHigh = 0;
 double rangeLow = 0;
 bool rangeSet = false;
+bool rangeRejected = false;  // Track if range was rejected
 bool tradeTakenToday = false;
 int tradesCountToday = 0;
 datetime currentDay = 0;
 datetime lastBarTime = 0;
-int ema200Handle = INVALID_HANDLE;
-double ema200Buffer[];
 int currentDayOfWeek = 0;
+
+//--- Virtual Stop Loss tracking
+struct VirtualSL
+{
+   ulong ticket;
+   double slPrice;
+   bool isLong;
+};
+VirtualSL virtualStops[];
+int virtualStopsCount = 0;
+
+//--- Partial TP tracking
+struct PartialTP
+{
+   ulong ticket;
+   double tp1Price;
+   double closePercent;
+   bool isLong;
+   bool tp1Hit;
+};
+PartialTP partialTPs[];
+int partialTPsCount = 0;
 
 //+------------------------------------------------------------------+
 //| Expert initialization function                                     |
@@ -104,16 +161,21 @@ int OnInit()
    trade.SetDeviationInPoints(InpMaxSlippagePoints);
    trade.SetTypeFilling(ORDER_FILLING_FOK);
    
-   if(InpUseEMA200Filter)
-   {
-      ema200Handle = iMA(_Symbol, PERIOD_CURRENT, InpEMA200Period, 0, MODE_EMA, PRICE_CLOSE);
-      if(ema200Handle == INVALID_HANDLE)
-      {
-         Print("Failed to create EMA200 indicator");
-         return(INIT_FAILED);
-      }
-      ArraySetAsSeries(ema200Buffer, true);
-   }
+   // Print broker requirements
+   long minStopLevel = SymbolInfoInteger(_Symbol, SYMBOL_TRADE_STOPS_LEVEL);
+   double point = SymbolInfoDouble(_Symbol, SYMBOL_POINT);
+   double minStopDistance = minStopLevel * point;
+   int digits = (int)SymbolInfoInteger(_Symbol, SYMBOL_DIGITS);
+   
+   Print("=== BROKER REQUIREMENTS FOR ", _Symbol, " ===");
+   Print("Minimum Stop Level: ", minStopLevel, " points");
+   Print("Minimum Stop Distance: ", NormalizeDouble(minStopDistance, digits));
+   Print("Point Size: ", point);
+   Print("Digits: ", digits);
+   Print("Min Lot: ", SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MIN));
+   Print("Max Lot: ", SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MAX));
+   Print("Lot Step: ", SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_STEP));
+   Print("==========================================");
    
    Print("ORB Strategy initialized successfully");
    return(INIT_SUCCEEDED);
@@ -124,8 +186,7 @@ int OnInit()
 //+------------------------------------------------------------------+
 void OnDeinit(const int reason)
 {
-   if(ema200Handle != INVALID_HANDLE)
-      IndicatorRelease(ema200Handle);
+   // Cleanup
 }
 
 //+------------------------------------------------------------------+
@@ -133,6 +194,12 @@ void OnDeinit(const int reason)
 //+------------------------------------------------------------------+
 void OnTick()
 {
+   // Check virtual stop losses first
+   CheckVirtualStopLosses();
+   
+   // Check partial take profits
+   CheckPartialTakeProfits();
+   
    MqlDateTime timeStruct;
    TimeToStruct(TimeCurrent(), timeStruct);
    
@@ -142,11 +209,20 @@ void OnTick()
       rangeHigh = 0;
       rangeLow = 0;
       rangeSet = false;
+      rangeRejected = false;
       tradeTakenToday = false;
       tradesCountToday = 0;
       lastBarTime = 0;
       currentDay = timeStruct.day;
       currentDayOfWeek = timeStruct.day_of_week;
+      
+      // Clear virtual stops for new day
+      ArrayResize(virtualStops, 0);
+      virtualStopsCount = 0;
+      
+      // Clear partial TPs for new day
+      ArrayResize(partialTPs, 0);
+      partialTPsCount = 0;
    }
    
    // Check if trading is allowed on this day
@@ -161,11 +237,15 @@ void OnTick()
    }
    
    // Set opening range
-   if(!rangeSet)
+   if(!rangeSet && !rangeRejected)
    {
       SetOpeningRange(timeStruct);
       return;
    }
+   
+   // If range was rejected, skip trading for today
+   if(rangeRejected)
+      return;
    
    // Check if we can still take entries
    if(tradesCountToday >= InpMaxTradesPerDay)
@@ -232,16 +312,26 @@ void CalculateRange()
       // Check if range size is within acceptable limits
       if(!IsValidRangeSize(currentDayOfWeek))
       {
-         Print("Range rejected - Size outside limits");
+         Print("❌ Range rejected - Size outside limits (will not trade today)");
          rangeHigh = 0;
          rangeLow = 0;
+         rangeRejected = true;  // Mark as rejected to avoid recalculation
          return;
       }
       
       rangeSet = true;
       double rangeSize = rangeHigh - rangeLow;
       double rangeSizePercent = (rangeSize / rangeHigh) * 100.0;
-      Print("Opening Range Set - High: ", rangeHigh, " Low: ", rangeLow, " Size: ", rangeSize, " (", rangeSizePercent, "%)");
+      
+      int digits = (int)SymbolInfoInteger(_Symbol, SYMBOL_DIGITS);
+      
+      // Truncate to 3 decimals without rounding
+      double truncatedPercent = MathFloor(rangeSizePercent * 1000) / 1000;
+      
+      Print("Opening Range Set - High: ", DoubleToString(rangeHigh, digits), 
+            " Low: ", DoubleToString(rangeLow, digits), 
+            " Size: ", DoubleToString(rangeSize, digits), 
+            " (", StringFormat("%.3f", truncatedPercent), "%)");
    }
 }
 
@@ -317,55 +407,74 @@ void CheckForBreakout()
    {
       if(PassesFilters(true))
       {
-         // Calculate SL and TP based on ORB levels
-         // SL: percentage below ORB Low
-         double slOffset = rangeSize * (stopLoss / 100.0);
-         double sl = NormalizeDouble(rangeLow - slOffset, digits);
-         
-         // Check if max loss override is needed
-         if(InpMaxLossPerTrade > 0)
-         {
-            double maxSlDistance = CalculateMaxSLDistance(InpMaxLossPerTrade);
-            double currentSlDistance = closedBarClose - sl;
-            if(currentSlDistance > maxSlDistance)
-            {
-               sl = NormalizeDouble(closedBarClose - maxSlDistance, digits);
-               Print("SL adjusted by max loss limit - New SL: ", sl);
-            }
-         }
-         
-         // TP1: partial take profit
+         // Calculate TP based on ORB levels (before opening position)
          double tp1Offset = rangeSize * (InpTP1Percent / 100.0);
          double tp1 = NormalizeDouble(rangeHigh + tp1Offset, digits);
          
-         // TP2: final take profit
-         double tp2Offset = rangeSize * (profitTarget / 100.0);
+         double tp2Offset = rangeSize * (InpTP2Percent / 100.0);
          double tp2 = NormalizeDouble(rangeHigh + tp2Offset, digits);
          
-         // Calculate lot size based on risk percentage
-         double slDistance = closedBarClose - sl;
-         double lotSize = CalculateLotSize(slDistance);
+         // Calculate initial SL for lot sizing (estimate)
+         double slOffset = rangeSize * (stopLoss / 100.0);
+         double estimatedSL = rangeLow - slOffset;
+         double estimatedEntry = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
+         double estimatedSlDistance = estimatedEntry - estimatedSL;
          
-         // Split position: TP1 gets specified %, TP2 gets the rest
-         double lotStep = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_STEP);
-         double lotSize1 = NormalizeDouble((lotSize * InpTP1PositionPercent / 100.0) / lotStep, 0) * lotStep;
-         double lotSize2 = NormalizeDouble(lotSize - lotSize1, 2);
+         // Calculate lot size based on estimated risk
+         double lotSize = CalculateLotSize(estimatedSlDistance);
          
-         // Ensure minimum lot sizes
+         // Ensure minimum lot size
          double minLot = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MIN);
-         if(lotSize1 < minLot) lotSize1 = minLot;
-         if(lotSize2 < minLot) lotSize2 = minLot;
+         if(lotSize < minLot) lotSize = minLot;
          
-         // Open first position with TP1
-         if(trade.Buy(lotSize1, _Symbol, 0, sl, tp1, "ORB Long TP1"))
+         // Open single position with TP2 (final target), then add SL
+         string comment = "ORB Long " + TimeToString(TimeCurrent(), TIME_DATE);
+         if(trade.Buy(lotSize, _Symbol, 0, 0, tp2, comment))
          {
-            Print("Long TP1 opened - Entry: ", closedBarClose, " SL: ", sl, " TP1: ", tp1, " (", InpTP1Percent, "%) Lots: ", lotSize1);
-         }
-         
-         // Open second position with TP2
-         if(trade.Buy(lotSize2, _Symbol, 0, sl, tp2, "ORB Long TP2"))
-         {
-            Print("Long TP2 opened - Entry: ", closedBarClose, " SL: ", sl, " TP2: ", tp2, " (", profitTarget, "%) Lots: ", lotSize2);
+            ulong ticket = trade.ResultOrder();
+            
+            // Get actual entry price
+            if(PositionSelectByTicket(ticket))
+            {
+               double actualEntry = PositionGetDouble(POSITION_PRICE_OPEN);
+               
+               // Calculate SL based on actual entry price
+               double sl = rangeLow - slOffset;
+               
+               // Check if max loss override is needed
+               if(InpMaxLossPerTrade > 0)
+               {
+                  double maxSlDistance = CalculateMaxSLDistance(InpMaxLossPerTrade);
+                  double currentSlDistance = actualEntry - sl;
+                  if(currentSlDistance > maxSlDistance)
+                  {
+                     sl = actualEntry - maxSlDistance;
+                     Print("SL adjusted by max loss limit - New SL: ", sl);
+                  }
+               }
+               
+               sl = NormalizeDouble(sl, digits);
+               
+               // Try to add SL to broker
+               if(trade.PositionModify(ticket, sl, tp2))
+               {
+                  Print("✓ Long opened - Entry: ", DoubleToString(actualEntry, digits), 
+                        " SL: ", DoubleToString(sl, digits), 
+                        " TP1: ", DoubleToString(tp1, digits), " (", InpTP1Percent, "%)", 
+                        " TP2: ", DoubleToString(tp2, digits), " (", InpTP2Percent, "%)", 
+                        " Lots: ", DoubleToString(lotSize, 2));
+               }
+               else
+               {
+                  Print("⚠ Long opened but SL update failed - Adding Virtual SL - Entry: ", DoubleToString(actualEntry, digits), 
+                        " TP2: ", DoubleToString(tp2, digits), 
+                        " Lots: ", DoubleToString(lotSize, 2));
+                  AddVirtualStopLoss(ticket, sl, true);
+               }
+               
+               // Store ticket for partial TP monitoring
+               MonitorPartialTP(ticket, tp1, InpTP1ClosePercent, true);
+            }
          }
          
          tradesCountToday++;
@@ -377,55 +486,74 @@ void CheckForBreakout()
    {
       if(PassesFilters(false))
       {
-         // Calculate SL and TP based on ORB levels
-         // SL: percentage above ORB High
-         double slOffset = rangeSize * (stopLoss / 100.0);
-         double sl = NormalizeDouble(rangeHigh + slOffset, digits);
-         
-         // Check if max loss override is needed
-         if(InpMaxLossPerTrade > 0)
-         {
-            double maxSlDistance = CalculateMaxSLDistance(InpMaxLossPerTrade);
-            double currentSlDistance = sl - closedBarClose;
-            if(currentSlDistance > maxSlDistance)
-            {
-               sl = NormalizeDouble(closedBarClose + maxSlDistance, digits);
-               Print("SL adjusted by max loss limit - New SL: ", sl);
-            }
-         }
-         
-         // TP1: partial take profit
+         // Calculate TP based on ORB levels (before opening position)
          double tp1Offset = rangeSize * (InpTP1Percent / 100.0);
          double tp1 = NormalizeDouble(rangeLow - tp1Offset, digits);
          
-         // TP2: final take profit
-         double tp2Offset = rangeSize * (profitTarget / 100.0);
+         double tp2Offset = rangeSize * (InpTP2Percent / 100.0);
          double tp2 = NormalizeDouble(rangeLow - tp2Offset, digits);
          
-         // Calculate lot size based on risk percentage
-         double slDistance = sl - closedBarClose;
-         double lotSize = CalculateLotSize(slDistance);
+         // Calculate initial SL for lot sizing (estimate)
+         double slOffset = rangeSize * (stopLoss / 100.0);
+         double estimatedSL = rangeHigh + slOffset;
+         double estimatedEntry = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+         double estimatedSlDistance = estimatedSL - estimatedEntry;
          
-         // Split position: TP1 gets specified %, TP2 gets the rest
-         double lotStep = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_STEP);
-         double lotSize1 = NormalizeDouble((lotSize * InpTP1PositionPercent / 100.0) / lotStep, 0) * lotStep;
-         double lotSize2 = NormalizeDouble(lotSize - lotSize1, 2);
+         // Calculate lot size based on estimated risk
+         double lotSize = CalculateLotSize(estimatedSlDistance);
          
-         // Ensure minimum lot sizes
+         // Ensure minimum lot size
          double minLot = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MIN);
-         if(lotSize1 < minLot) lotSize1 = minLot;
-         if(lotSize2 < minLot) lotSize2 = minLot;
+         if(lotSize < minLot) lotSize = minLot;
          
-         // Open first position with TP1
-         if(trade.Sell(lotSize1, _Symbol, 0, sl, tp1, "ORB Short TP1"))
+         // Open single position with TP2 (final target), then add SL
+         string comment = "ORB Short " + TimeToString(TimeCurrent(), TIME_DATE);
+         if(trade.Sell(lotSize, _Symbol, 0, 0, tp2, comment))
          {
-            Print("Short TP1 opened - Entry: ", closedBarClose, " SL: ", sl, " TP1: ", tp1, " (", InpTP1Percent, "%) Lots: ", lotSize1);
-         }
-         
-         // Open second position with TP2
-         if(trade.Sell(lotSize2, _Symbol, 0, sl, tp2, "ORB Short TP2"))
-         {
-            Print("Short TP2 opened - Entry: ", closedBarClose, " SL: ", sl, " TP2: ", tp2, " (", profitTarget, "%) Lots: ", lotSize2);
+            ulong ticket = trade.ResultOrder();
+            
+            // Get actual entry price
+            if(PositionSelectByTicket(ticket))
+            {
+               double actualEntry = PositionGetDouble(POSITION_PRICE_OPEN);
+               
+               // Calculate SL based on actual entry price
+               double sl = rangeHigh + slOffset;
+               
+               // Check if max loss override is needed
+               if(InpMaxLossPerTrade > 0)
+               {
+                  double maxSlDistance = CalculateMaxSLDistance(InpMaxLossPerTrade);
+                  double currentSlDistance = sl - actualEntry;
+                  if(currentSlDistance > maxSlDistance)
+                  {
+                     sl = actualEntry + maxSlDistance;
+                     Print("SL adjusted by max loss limit - New SL: ", sl);
+                  }
+               }
+               
+               sl = NormalizeDouble(sl, digits);
+               
+               // Try to add SL to broker
+               if(trade.PositionModify(ticket, sl, tp2))
+               {
+                  Print("✓ Short opened - Entry: ", DoubleToString(actualEntry, digits), 
+                        " SL: ", DoubleToString(sl, digits), 
+                        " TP1: ", DoubleToString(tp1, digits), " (", InpTP1Percent, "%)", 
+                        " TP2: ", DoubleToString(tp2, digits), " (", InpTP2Percent, "%)", 
+                        " Lots: ", DoubleToString(lotSize, 2));
+               }
+               else
+               {
+                  Print("⚠ Short opened but SL update failed - Adding Virtual SL - Entry: ", DoubleToString(actualEntry, digits), 
+                        " TP2: ", DoubleToString(tp2, digits), 
+                        " Lots: ", DoubleToString(lotSize, 2));
+                  AddVirtualStopLoss(ticket, sl, false);
+               }
+               
+               // Store ticket for partial TP monitoring
+               MonitorPartialTP(ticket, tp1, InpTP1ClosePercent, false);
+            }
          }
          
          tradesCountToday++;
@@ -472,17 +600,20 @@ bool IsValidRangeSize(int dayOfWeek)
    double minSize = GetMinORBSize(dayOfWeek);
    double maxSize = GetMaxORBSize(dayOfWeek);
    
+   // Truncate to 3 decimals without rounding
+   double truncatedPercent = MathFloor(rangeSizePercent * 1000) / 1000;
+   
    // Check minimum range size
    if(minSize > 0 && rangeSizePercent < minSize)
    {
-      Print("Range too small: ", rangeSizePercent, "% (min: ", minSize, "%)");
+      Print("Range too small: ", StringFormat("%.3f", truncatedPercent), "% (min: ", minSize, "%)");
       return false;
    }
    
    // Check maximum range size
    if(maxSize > 0 && rangeSizePercent > maxSize)
    {
-      Print("Range too large: ", rangeSizePercent, "% (max: ", maxSize, "%)");
+      Print("Range too large: ", StringFormat("%.3f", truncatedPercent), "% (max: ", maxSize, "%)");
       return false;
    }
    
@@ -494,65 +625,16 @@ bool IsValidRangeSize(int dayOfWeek)
 //+------------------------------------------------------------------+
 bool PassesFilters(bool isLong)
 {
-   // EMA200 Filter
-   if(InpUseEMA200Filter)
+   // Spread Filter
+   if(InpMaxSpread > 0)
    {
-      if(CopyBuffer(ema200Handle, 0, 0, 2, ema200Buffer) < 2)
-      {
-         Print("Failed to copy EMA200 buffer");
-         return false;
-      }
+      double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
+      double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+      double spread = (ask - bid) / SymbolInfoDouble(_Symbol, SYMBOL_POINT);
       
-      double currentPrice = SymbolInfoDouble(_Symbol, SYMBOL_BID);
-      
-      if(isLong && currentPrice < ema200Buffer[0])
+      if(spread > InpMaxSpread)
       {
-         Print("Long rejected: Price below EMA200");
-         return false;
-      }
-      if(!isLong && currentPrice > ema200Buffer[0])
-      {
-         Print("Short rejected: Price above EMA200");
-         return false;
-      }
-   }
-   
-   // Gap Filter
-   if(InpUseGapFilter)
-   {
-      double yesterdayClose = iClose(_Symbol, PERIOD_D1, 1);
-      double todayOpen = iOpen(_Symbol, PERIOD_D1, 0);
-      
-      bool gapUp = todayOpen > yesterdayClose;
-      bool gapDown = todayOpen < yesterdayClose;
-      
-      if(isLong && gapDown)
-      {
-         Print("Long rejected: Gap down detected");
-         return false;
-      }
-      if(!isLong && gapUp)
-      {
-         Print("Short rejected: Gap up detected");
-         return false;
-      }
-   }
-   
-   // Volume Filter
-   if(InpUseVolumeFilter)
-   {
-      long currentVolume = iVolume(_Symbol, PERIOD_M1, 0);
-      long totalVolume = 0;
-      
-      for(int i = 1; i <= InpVolumePeriod; i++)
-      {
-         totalVolume += iVolume(_Symbol, PERIOD_M1, i);
-      }
-      long avgVolume = totalVolume / InpVolumePeriod;
-      
-      if(currentVolume < avgVolume)
-      {
-         Print("Trade rejected: Volume below average");
+         Print("❌ Trade rejected: Spread too high (", DoubleToString(spread, 1), " points, max: ", InpMaxSpread, ")");
          return false;
       }
    }
@@ -678,6 +760,7 @@ double GetMaxORBSize(int dayOfWeek)
 //+------------------------------------------------------------------+
 void CloseAllPositions()
 {
+   int closedCount = 0;
    for(int i = PositionsTotal() - 1; i >= 0; i--)
    {
       ulong ticket = PositionGetTicket(i);
@@ -685,9 +768,240 @@ void CloseAllPositions()
       {
          if(PositionGetString(POSITION_SYMBOL) == _Symbol)
          {
-            trade.PositionClose(ticket);
+            double profit = PositionGetDouble(POSITION_PROFIT);
+            if(trade.PositionClose(ticket))
+            {
+               Print("🕐 END OF DAY CLOSE - Ticket #", ticket, " Profit: $", DoubleToString(profit, 2));
+               closedCount++;
+            }
          }
       }
    }
+   
+   if(closedCount > 0)
+   {
+      Print("📊 Total positions closed at end of day: ", closedCount);
+   }
+}
+
+//+------------------------------------------------------------------+
+//| Add Virtual Stop Loss                                              |
+//+------------------------------------------------------------------+
+void AddVirtualStopLoss(ulong ticket, double slPrice, bool isLong)
+{
+   ArrayResize(virtualStops, virtualStopsCount + 1);
+   virtualStops[virtualStopsCount].ticket = ticket;
+   virtualStops[virtualStopsCount].slPrice = slPrice;
+   virtualStops[virtualStopsCount].isLong = isLong;
+   virtualStopsCount++;
+   
+   Print("🛡️ Virtual SL added for ticket #", ticket, " at ", slPrice, " (", (isLong ? "Long" : "Short"), ")");
+}
+
+//+------------------------------------------------------------------+
+//| Check Virtual Stop Losses                                          |
+//+------------------------------------------------------------------+
+void CheckVirtualStopLosses()
+{
+   if(virtualStopsCount == 0)
+      return;
+   
+   double currentBid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+   double currentAsk = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
+   
+   for(int i = virtualStopsCount - 1; i >= 0; i--)
+   {
+      ulong ticket = virtualStops[i].ticket;
+      double slPrice = virtualStops[i].slPrice;
+      bool isLong = virtualStops[i].isLong;
+      
+      // Check if position still exists
+      if(!PositionSelectByTicket(ticket))
+      {
+         // Position closed, remove from virtual stops
+         RemoveVirtualStopLoss(i);
+         continue;
+      }
+      
+      // Check if virtual SL is hit
+      bool slHit = false;
+      if(isLong && currentBid <= slPrice)
+      {
+         slHit = true;
+         Print("🚨 Virtual SL HIT for Long #", ticket, " - Bid: ", currentBid, " <= SL: ", slPrice);
+      }
+      else if(!isLong && currentAsk >= slPrice)
+      {
+         slHit = true;
+         Print("🚨 Virtual SL HIT for Short #", ticket, " - Ask: ", currentAsk, " >= SL: ", slPrice);
+      }
+      
+      if(slHit)
+      {
+         // Close position
+         double profit = PositionGetDouble(POSITION_PROFIT);
+         if(trade.PositionClose(ticket))
+         {
+            Print("🛡️ VIRTUAL SL HIT - Position #", ticket, " closed. Profit: $", DoubleToString(profit, 2));
+            RemoveVirtualStopLoss(i);
+         }
+         else
+         {
+            Print("❌ Failed to close position #", ticket, " - Error: ", GetLastError());
+         }
+      }
+   }
+}
+
+//+------------------------------------------------------------------+
+//| Remove Virtual Stop Loss                                           |
+//+------------------------------------------------------------------+
+void RemoveVirtualStopLoss(int index)
+{
+   if(index < 0 || index >= virtualStopsCount)
+      return;
+   
+   // Shift array elements
+   for(int i = index; i < virtualStopsCount - 1; i++)
+   {
+      virtualStops[i] = virtualStops[i + 1];
+   }
+   
+   virtualStopsCount--;
+   ArrayResize(virtualStops, virtualStopsCount);
+}
+
+//+------------------------------------------------------------------+
+//| Monitor Partial Take Profit                                        |
+//+------------------------------------------------------------------+
+void MonitorPartialTP(ulong ticket, double tp1Price, double closePercent, bool isLong)
+{
+   ArrayResize(partialTPs, partialTPsCount + 1);
+   partialTPs[partialTPsCount].ticket = ticket;
+   partialTPs[partialTPsCount].tp1Price = tp1Price;
+   partialTPs[partialTPsCount].closePercent = closePercent;
+   partialTPs[partialTPsCount].isLong = isLong;
+   partialTPs[partialTPsCount].tp1Hit = false;
+   partialTPsCount++;
+   
+   Print("📊 Monitoring partial TP for ticket #", ticket, " - TP1: ", tp1Price, " Close: ", closePercent, "%");
+}
+
+//+------------------------------------------------------------------+
+//| Check Partial Take Profits                                         |
+//+------------------------------------------------------------------+
+void CheckPartialTakeProfits()
+{
+   if(partialTPsCount == 0)
+      return;
+   
+   double currentBid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+   double currentAsk = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
+   
+   for(int i = partialTPsCount - 1; i >= 0; i--)
+   {
+      ulong ticket = partialTPs[i].ticket;
+      double tp1Price = partialTPs[i].tp1Price;
+      double closePercent = partialTPs[i].closePercent;
+      bool isLong = partialTPs[i].isLong;
+      bool tp1Hit = partialTPs[i].tp1Hit;
+      
+      // Check if position still exists
+      if(!PositionSelectByTicket(ticket))
+      {
+         // Position closed, remove from monitoring
+         RemovePartialTP(i);
+         continue;
+      }
+      
+      // Double-check position still exists before attempting partial close
+      if(!PositionSelectByTicket(ticket))
+      {
+         RemovePartialTP(i);
+         continue;
+      }
+      
+      // Check if TP1 is hit (only once)
+      if(!tp1Hit)
+      {
+         bool tp1Reached = false;
+         if(isLong && currentBid >= tp1Price)
+         {
+            tp1Reached = true;
+            Print("🎯 TP1 HIT for Long #", ticket, " - Bid: ", currentBid, " >= TP1: ", tp1Price);
+         }
+         else if(!isLong && currentAsk <= tp1Price)
+         {
+            tp1Reached = true;
+            Print("🎯 TP1 HIT for Short #", ticket, " - Ask: ", currentAsk, " <= TP1: ", tp1Price);
+         }
+         
+         if(tp1Reached)
+         {
+            // Close partial position
+            double currentVolume = PositionGetDouble(POSITION_VOLUME);
+            double lotStep = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_STEP);
+            double minLot = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MIN);
+            
+            // Calculate close volume and normalize to lot step
+            double closeVolume = MathFloor((currentVolume * closePercent / 100.0) / lotStep) * lotStep;
+            
+            // Ensure we don't close more than available
+            if(closeVolume > currentVolume)
+               closeVolume = currentVolume;
+            
+            // Ensure minimum lot
+            if(closeVolume < minLot)
+               closeVolume = minLot;
+            
+            // Ensure remaining volume is also valid
+            double remainingVolume = currentVolume - closeVolume;
+            if(remainingVolume > 0 && remainingVolume < minLot)
+            {
+               // Adjust close volume to leave at least minLot
+               closeVolume = currentVolume - minLot;
+               if(closeVolume < minLot)
+               {
+                  Print("⚠ Cannot partial close - remaining volume would be too small");
+                  partialTPs[i].tp1Hit = true;  // Mark as hit to avoid retry
+                  continue;
+               }
+            }
+            
+            // Close partial
+            if(trade.PositionClosePartial(ticket, closeVolume))
+            {
+               Print("✓ Partial TP1 closed - Ticket #", ticket, 
+                     " Closed: ", DoubleToString(closeVolume, 2), " lots (", closePercent, "%)", 
+                     " Remaining: ", DoubleToString(remainingVolume, 2), " lots");
+               partialTPs[i].tp1Hit = true;
+            }
+            else
+            {
+               Print("❌ Failed to close partial TP1 - Ticket #", ticket, " Error: ", GetLastError());
+               // Mark as hit anyway to avoid infinite retries
+               partialTPs[i].tp1Hit = true;
+            }
+         }
+      }
+   }
+}
+
+//+------------------------------------------------------------------+
+//| Remove Partial TP                                                  |
+//+------------------------------------------------------------------+
+void RemovePartialTP(int index)
+{
+   if(index < 0 || index >= partialTPsCount)
+      return;
+   
+   // Shift array elements
+   for(int i = index; i < partialTPsCount - 1; i++)
+   {
+      partialTPs[i] = partialTPs[i + 1];
+   }
+   
+   partialTPsCount--;
+   ArrayResize(partialTPs, partialTPsCount);
 }
 //+------------------------------------------------------------------+
