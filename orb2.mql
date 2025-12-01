@@ -1,0 +1,1107 @@
+//+------------------------------------------------------------------+
+//|                                                          orb.mql5 |
+//|                                    Opening Range Breakout Strategy |
+//+------------------------------------------------------------------+
+#property copyright "ORB Strategy"
+#property version   "1.00"
+#property strict
+
+#include <Trade\Trade.mqh>
+
+//--- Enums
+enum ENUM_PROFIT_TARGET
+{
+   PT_30 = 30,    // 30%
+   PT_35 = 35,    // 35%
+   PT_40 = 40,    // 40%
+   PT_45 = 45,    // 45%
+   PT_50 = 50,    // 50%
+   PT_55 = 55,    // 55%
+   PT_60 = 60,    // 60%
+   PT_65 = 65,    // 65%
+   PT_70 = 70,    // 70%
+   PT_75 = 75,    // 75%
+   PT_80 = 80,    // 80%
+   PT_85 = 85,    // 85%
+   PT_90 = 90,    // 90%
+   PT_95 = 95,    // 95%
+   PT_100 = 100   // 100%
+};
+
+enum ENUM_STOP_LOSS
+{
+   SL_30 = 30,    // 30%
+   SL_35 = 35,    // 35%
+   SL_40 = 40,    // 40%
+   SL_45 = 45,    // 45%
+   SL_50 = 50,    // 50%
+   SL_55 = 55,    // 55%
+   SL_60 = 60,    // 60%
+   SL_65 = 65,    // 65%
+   SL_70 = 70,    // 70%
+   SL_75 = 75,    // 75%
+   SL_80 = 80,    // 80%
+   SL_85 = 85,    // 85%
+   SL_90 = 90,    // 90%
+   SL_95 = 95,    // 95%
+   SL_100 = 100   // 100%
+};
+
+//--- Input Parameters
+input group "=== Range Settings ==="
+input int InpRangeMinutes = 15;              // Opening Range Duration (minutes)
+input ENUM_TIMEFRAMES InpCandleTimeframe = PERIOD_M15;  // Candle Timeframe for Entry
+input int InpMaxTradesPerDay = 1;            // Max Trades Per Day
+
+input group "=== MONDAY ==="
+input bool InpTradeMonday = true;                        // Trade on Monday
+input bool InpMondayBreakout = true;                     // Trade ORB breakout
+input bool InpMondayBreakdown = true;                    // Trade ORB breakdown
+input ENUM_PROFIT_TARGET InpMondayTP1 = PT_40;           // TP1 (% of ORB size)
+input double InpMondayTP1ClosePercent = 50.0;            // TP1 Close Size (% of position)
+input ENUM_PROFIT_TARGET InpMondayTP2 = PT_80;           // TP2 (% of ORB size)
+input ENUM_STOP_LOSS InpMondayStopLoss = SL_100;         // Stop loss (% of ORB size)
+input double InpMondayMinORBSize = 0.0;                  // Min ORB size %
+input double InpMondayMaxORBSize = 0.6;                  // Max ORB size %
+
+input group "=== TUESDAY ==="
+input bool InpTradeTuesday = true;                        // Trade on Tuesday
+input bool InpTuesdayBreakout = true;                     // Trade ORB breakout
+input bool InpTuesdayBreakdown = true;                    // Trade ORB breakdown
+input ENUM_PROFIT_TARGET InpTuesdayTP1 = PT_40;           // TP1 (% of ORB size)
+input double InpTuesdayTP1ClosePercent = 50.0;            // TP1 Close Size (% of position)
+input ENUM_PROFIT_TARGET InpTuesdayTP2 = PT_80;           // TP2 (% of ORB size)
+input ENUM_STOP_LOSS InpTuesdayStopLoss = SL_100;         // Stop loss (% of ORB size)
+input double InpTuesdayMinORBSize = 0.0;                  // Min ORB size %
+input double InpTuesdayMaxORBSize = 0.6;                  // Max ORB size %
+
+input group "=== WEDNESDAY ==="
+input bool InpTradeWednesday = true;                        // Trade on Wednesday
+input bool InpWednesdayBreakout = true;                     // Trade ORB breakout
+input bool InpWednesdayBreakdown = true;                    // Trade ORB breakdown
+input ENUM_PROFIT_TARGET InpWednesdayTP1 = PT_40;           // TP1 (% of ORB size)
+input double InpWednesdayTP1ClosePercent = 50.0;            // TP1 Close Size (% of position)
+input ENUM_PROFIT_TARGET InpWednesdayTP2 = PT_80;           // TP2 (% of ORB size)
+input ENUM_STOP_LOSS InpWednesdayStopLoss = SL_100;         // Stop loss (% of ORB size)
+input double InpWednesdayMinORBSize = 0.0;                  // Min ORB size %
+input double InpWednesdayMaxORBSize = 0.6;                  // Max ORB size %
+
+input group "=== THURSDAY ==="
+input bool InpTradeThursday = true;                        // Trade on Thursday
+input bool InpThursdayBreakout = true;                     // Trade ORB breakout
+input bool InpThursdayBreakdown = true;                    // Trade ORB breakdown
+input ENUM_PROFIT_TARGET InpThursdayTP1 = PT_40;           // TP1 (% of ORB size)
+input double InpThursdayTP1ClosePercent = 50.0;            // TP1 Close Size (% of position)
+input ENUM_PROFIT_TARGET InpThursdayTP2 = PT_80;           // TP2 (% of ORB size)
+input ENUM_STOP_LOSS InpThursdayStopLoss = SL_100;         // Stop loss (% of ORB size)
+input double InpThursdayMinORBSize = 0.0;                  // Min ORB size %
+input double InpThursdayMaxORBSize = 0.6;                  // Max ORB size %
+
+input group "=== FRIDAY ==="
+input bool InpTradeFriday = true;                        // Trade on Friday
+input bool InpFridayBreakout = true;                     // Trade ORB breakout
+input bool InpFridayBreakdown = true;                    // Trade ORB breakdown
+input ENUM_PROFIT_TARGET InpFridayTP1 = PT_40;           // TP1 (% of ORB size)
+input double InpFridayTP1ClosePercent = 50.0;            // TP1 Close Size (% of position)
+input ENUM_PROFIT_TARGET InpFridayTP2 = PT_80;           // TP2 (% of ORB size)
+input ENUM_STOP_LOSS InpFridayStopLoss = SL_100;         // Stop loss (% of ORB size)
+input double InpFridayMinORBSize = 0.0;                  // Min ORB size %
+input double InpFridayMaxORBSize = 0.6;                  // Max ORB size %
+
+input group "=== Filters ==="
+input double InpMaxSpread = 10.0;            // Max Spread (points, 0=disabled)
+
+input group "=== Risk Management ==="
+input double InpRiskPercent = 1.0;           // Risk Per Trade (% of account)
+input double InpStopLossRiskPercent = 100.0; // SL Risk (% of account risk, 0=disabled)
+input int InpMaxSlippagePoints = 10;         // Max Slippage (points)
+
+input group "=== Time Settings ==="
+input int InpStartHour = 9;                  // Market Open Hour
+input int InpStartMinute = 30;               // Market Open Minute
+input bool InpUseTimeBasedClose = true;      // Use Time-Based Position Close
+input int InpCloseHour = 15;                 // Close All Positions Hour
+input int InpCloseMinute = 45;               // Close All Positions Minute
+
+//--- Global Variables
+CTrade trade;
+double rangeHigh = 0;
+double rangeLow = 0;
+bool rangeSet = false;
+bool rangeRejected = false;  // Track if range was rejected
+bool tradeTakenToday = false;
+int tradesCountToday = 0;
+datetime currentDay = 0;
+datetime lastBarTime = 0;
+int currentDayOfWeek = 0;
+
+//--- Virtual Stop Loss tracking
+struct VirtualSL
+{
+   ulong ticket;
+   double slPrice;
+   bool isLong;
+};
+VirtualSL virtualStops[];
+int virtualStopsCount = 0;
+
+//--- Partial TP tracking
+struct PartialTP
+{
+   ulong ticket;
+   double tp1Price;
+   double closePercent;
+   bool isLong;
+   bool tp1Hit;
+};
+PartialTP partialTPs[];
+int partialTPsCount = 0;
+
+//--- Risk-based SL tracking
+struct RiskBasedSL
+{
+   ulong ticket;
+   double maxLoss;
+};
+RiskBasedSL riskBasedSLs[];
+int riskBasedSLsCount = 0;
+
+//+------------------------------------------------------------------+
+//| Expert initialization function                                     |
+//+------------------------------------------------------------------+
+int OnInit()
+{
+   trade.SetExpertMagicNumber(123456);
+   trade.SetDeviationInPoints(InpMaxSlippagePoints);
+   trade.SetTypeFilling(ORDER_FILLING_FOK);
+   
+   // Print broker requirements
+   long minStopLevel = SymbolInfoInteger(_Symbol, SYMBOL_TRADE_STOPS_LEVEL);
+   double point = SymbolInfoDouble(_Symbol, SYMBOL_POINT);
+   double minStopDistance = minStopLevel * point;
+   int digits = (int)SymbolInfoInteger(_Symbol, SYMBOL_DIGITS);
+   
+   Print("=== BROKER REQUIREMENTS FOR ", _Symbol, " ===");
+   Print("Minimum Stop Level: ", minStopLevel, " points");
+   Print("Minimum Stop Distance: ", NormalizeDouble(minStopDistance, digits));
+   Print("Point Size: ", point);
+   Print("Digits: ", digits);
+   Print("Min Lot: ", SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MIN));
+   Print("Max Lot: ", SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MAX));
+   Print("Lot Step: ", SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_STEP));
+   Print("==========================================");
+   
+   Print("ORB Strategy initialized successfully");
+   return(INIT_SUCCEEDED);
+}
+
+//+------------------------------------------------------------------+
+//| Expert deinitialization function                                   |
+//+------------------------------------------------------------------+
+void OnDeinit(const int reason)
+{
+   // Cleanup if needed
+}
+
+//+------------------------------------------------------------------+
+//| Expert tick function                                               |
+//+------------------------------------------------------------------+
+void OnTick()
+{
+   // Check virtual stop losses first
+   CheckVirtualStopLosses();
+   
+   // Check risk-based stop losses
+   CheckRiskBasedStopLosses();
+   
+   // Check partial take profits
+   CheckPartialTakeProfits();
+   
+   MqlDateTime timeStruct;
+   TimeToStruct(TimeCurrent(), timeStruct);
+   
+   // Reset daily variables at start of new day
+   if(timeStruct.day != currentDay)
+   {
+      rangeHigh = 0;
+      rangeLow = 0;
+      rangeSet = false;
+      rangeRejected = false;
+      tradeTakenToday = false;
+      tradesCountToday = 0;
+      lastBarTime = 0;
+      currentDay = timeStruct.day;
+      currentDayOfWeek = timeStruct.day_of_week;
+      
+      // Clear virtual stops for new day
+      ArrayResize(virtualStops, 0);
+      virtualStopsCount = 0;
+      
+      // Clear partial TPs for new day
+      ArrayResize(partialTPs, 0);
+      partialTPsCount = 0;
+      
+      // Clear risk-based SLs for new day
+      ArrayResize(riskBasedSLs, 0);
+      riskBasedSLsCount = 0;
+   }
+   
+   // Check if trading is allowed on this day
+   if(!IsTradingDayAllowed(currentDayOfWeek))
+      return;
+   
+   // Close all positions at end of day (if enabled)
+   if(InpUseTimeBasedClose && timeStruct.hour == InpCloseHour && timeStruct.min >= InpCloseMinute)
+   {
+      CloseAllPositions();
+      return;
+   }
+   
+   // Set opening range
+   if(!rangeSet && !rangeRejected)
+   {
+      SetOpeningRange(timeStruct);
+      return;
+   }
+   
+   // If range was rejected, skip trading for today
+   if(rangeRejected)
+      return;
+   
+   // Check if we can still take entries
+   if(tradesCountToday >= InpMaxTradesPerDay)
+      return;
+   
+   // Check for breakout
+   CheckForBreakout();
+}
+
+//+------------------------------------------------------------------+
+//| Set Opening Range                                                  |
+//+------------------------------------------------------------------+
+void SetOpeningRange(MqlDateTime &timeStruct)
+{
+   // Check if market has opened
+   int minutesSinceOpen = GetMinutesSinceOpen(timeStruct);
+   
+   if(minutesSinceOpen < 0)
+      return; // Market hasn't opened yet
+   
+   if(minutesSinceOpen >= InpRangeMinutes)
+   {
+      // Range period is over, calculate range
+      if(rangeHigh == 0 && rangeLow == 0)
+      {
+         CalculateRange();
+      }
+   }
+}
+
+//+------------------------------------------------------------------+
+//| Calculate Opening Range High and Low                               |
+//+------------------------------------------------------------------+
+void CalculateRange()
+{
+   datetime marketOpen = GetMarketOpenTime();
+   datetime rangeEnd = marketOpen + InpRangeMinutes * 60;
+   
+   int bars = Bars(_Symbol, PERIOD_M1, marketOpen, rangeEnd);
+   if(bars < InpRangeMinutes)
+   {
+      Print("Not enough bars to calculate range");
+      return;
+   }
+   
+   rangeHigh = 0;
+   rangeLow = DBL_MAX;
+   
+   for(int i = 0; i < bars; i++)
+   {
+      datetime barTime = iTime(_Symbol, PERIOD_M1, i);
+      if(barTime >= marketOpen && barTime < rangeEnd)
+      {
+         double high = iHigh(_Symbol, PERIOD_M1, i);
+         double low = iLow(_Symbol, PERIOD_M1, i);
+         
+         if(high > rangeHigh) rangeHigh = high;
+         if(low < rangeLow) rangeLow = low;
+      }
+   }
+   
+   if(rangeHigh > 0 && rangeLow < DBL_MAX)
+   {
+      // Check if range size is within acceptable limits
+      if(!IsValidRangeSize(currentDayOfWeek))
+      {
+         Print("❌ Range rejected - Size outside limits (will not trade today)");
+         rangeHigh = 0;
+         rangeLow = 0;
+         rangeRejected = true;  // Mark as rejected to avoid recalculation
+         return;
+      }
+      
+      rangeSet = true;
+      double rangeSize = rangeHigh - rangeLow;
+      double rangeSizePercent = (rangeSize / rangeHigh) * 100.0;
+      
+      int digits = (int)SymbolInfoInteger(_Symbol, SYMBOL_DIGITS);
+      
+      // Truncate to 3 decimals without rounding
+      double truncatedPercent = MathFloor(rangeSizePercent * 1000) / 1000;
+      
+      Print("Opening Range Set - High: ", DoubleToString(rangeHigh, digits), 
+            " Low: ", DoubleToString(rangeLow, digits), 
+            " Size: ", DoubleToString(rangeSize, digits), 
+            " (", StringFormat("%.3f", truncatedPercent), "%)");
+   }
+}
+
+//+------------------------------------------------------------------+
+//| Get Minutes Since Market Open                                      |
+//+------------------------------------------------------------------+
+int GetMinutesSinceOpen(MqlDateTime &timeStruct)
+{
+   int currentMinutes = timeStruct.hour * 60 + timeStruct.min;
+   int openMinutes = InpStartHour * 60 + InpStartMinute;
+   
+   return currentMinutes - openMinutes;
+}
+
+//+------------------------------------------------------------------+
+//| Get Market Open Time for Today                                     |
+//+------------------------------------------------------------------+
+datetime GetMarketOpenTime()
+{
+   MqlDateTime timeStruct;
+   TimeToStruct(TimeCurrent(), timeStruct);
+   timeStruct.hour = InpStartHour;
+   timeStruct.min = InpStartMinute;
+   timeStruct.sec = 0;
+   
+   return StructToTime(timeStruct);
+}
+
+
+
+//+------------------------------------------------------------------+
+//| Check for Breakout and Enter Trade                                 |
+//+------------------------------------------------------------------+
+void CheckForBreakout()
+{
+   // Check if new bar has formed on selected timeframe
+   datetime currentBarTime = iTime(_Symbol, InpCandleTimeframe, 0);
+   if(currentBarTime == lastBarTime)
+      return; // Wait for bar to close
+   
+   lastBarTime = currentBarTime;
+   
+   // Get the closed bar data (bar index 1)
+   double closedBarClose = iClose(_Symbol, InpCandleTimeframe, 1);
+   double closedBarHigh = iHigh(_Symbol, InpCandleTimeframe, 1);
+   double closedBarLow = iLow(_Symbol, InpCandleTimeframe, 1);
+   
+   int digits = (int)SymbolInfoInteger(_Symbol, SYMBOL_DIGITS);
+   double rangeSize = rangeHigh - rangeLow;
+   
+   // Get day-specific settings
+   bool tradeBreakout = GetBreakoutSetting(currentDayOfWeek);
+   bool tradeBreakdown = GetBreakdownSetting(currentDayOfWeek);
+   double tp1Percent = GetTP1(currentDayOfWeek);
+   double tp1ClosePercent = GetTP1ClosePercent(currentDayOfWeek);
+   double tp2Percent = GetTP2(currentDayOfWeek);
+   double stopLoss = GetStopLoss(currentDayOfWeek);
+   
+   // Check for bullish breakout - closed bar must close above range high
+   if(closedBarClose > rangeHigh && tradeBreakout)
+   {
+      if(PassesFilters(true))
+      {
+         // Calculate TP based on ORB levels (before opening position)
+         double tp1Offset = rangeSize * (tp1Percent / 100.0);
+         double tp1 = NormalizeDouble(rangeHigh + tp1Offset, digits);
+         
+         double tp2Offset = rangeSize * (tp2Percent / 100.0);
+         double tp2 = NormalizeDouble(rangeHigh + tp2Offset, digits);
+         
+         // Calculate initial SL for lot sizing (estimate)
+         double slOffset = rangeSize * (stopLoss / 100.0);
+         double estimatedSL = rangeLow - slOffset;
+         double estimatedEntry = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
+         double estimatedSlDistance = estimatedEntry - estimatedSL;
+         
+         // Calculate lot size based on estimated risk
+         double lotSize = CalculateLotSize(estimatedSlDistance);
+         
+         // Ensure minimum lot size
+         double minLot = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MIN);
+         if(lotSize < minLot) lotSize = minLot;
+         
+         // Open single position with TP2 (final target), use virtual SL
+         string comment = "Long ORB:" + DoubleToString(stopLoss, 0) + "%";
+         if(InpStopLossRiskPercent > 0)
+            comment += " Risk:" + DoubleToString(InpStopLossRiskPercent, 0) + "%";
+         
+         if(trade.Buy(lotSize, _Symbol, 0, 0, tp2, comment))
+         {
+            ulong ticket = trade.ResultOrder();
+            
+            // Get actual entry price
+            if(PositionSelectByTicket(ticket))
+            {
+               double actualEntry = PositionGetDouble(POSITION_PRICE_OPEN);
+               
+               // Calculate ORB-based SL price
+               double sl = rangeLow - slOffset;
+               sl = NormalizeDouble(sl, digits);
+               
+               // Add ORB-based SL as virtual (always)
+               AddVirtualStopLoss(ticket, sl, true);
+               
+               Print("✓ Long opened - Entry: ", DoubleToString(actualEntry, digits), 
+                     " Virtual ORB-SL: ", DoubleToString(sl, digits), 
+                     " TP1: ", DoubleToString(tp1, digits), " (", tp1Percent, "%)", 
+                     " TP2: ", DoubleToString(tp2, digits), " (", tp2Percent, "%)", 
+                     " Lots: ", DoubleToString(lotSize, 2));
+               
+               // Store ticket for partial TP monitoring
+               MonitorPartialTP(ticket, tp1, tp1ClosePercent, true);
+               
+               // Add risk-based SL monitoring if enabled
+               if(InpStopLossRiskPercent > 0)
+               {
+                  double accountBalance = AccountInfoDouble(ACCOUNT_BALANCE);
+                  double riskAmount = accountBalance * (InpRiskPercent / 100.0);
+                  double maxLoss = riskAmount * (InpStopLossRiskPercent / 100.0);
+                  AddRiskBasedSL(ticket, maxLoss);
+               }
+            }
+         }
+         
+         tradesCountToday++;
+         tradeTakenToday = true;
+      }
+   }
+   // Check for bearish breakout - closed bar must close below range low
+   else if(closedBarClose < rangeLow && tradeBreakdown)
+   {
+      if(PassesFilters(false))
+      {
+         // Calculate TP based on ORB levels (before opening position)
+         double tp1Offset = rangeSize * (tp1Percent / 100.0);
+         double tp1 = NormalizeDouble(rangeLow - tp1Offset, digits);
+         
+         double tp2Offset = rangeSize * (tp2Percent / 100.0);
+         double tp2 = NormalizeDouble(rangeLow - tp2Offset, digits);
+         
+         // Calculate initial SL for lot sizing (estimate)
+         double slOffset = rangeSize * (stopLoss / 100.0);
+         double estimatedSL = rangeHigh + slOffset;
+         double estimatedEntry = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+         double estimatedSlDistance = estimatedSL - estimatedEntry;
+         
+         // Calculate lot size based on estimated risk
+         double lotSize = CalculateLotSize(estimatedSlDistance);
+         
+         // Ensure minimum lot size
+         double minLot = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MIN);
+         if(lotSize < minLot) lotSize = minLot;
+         
+         // Open single position with TP2 (final target), use virtual SL
+         string comment = "Short ORB:" + DoubleToString(stopLoss, 0) + "%";
+         if(InpStopLossRiskPercent > 0)
+            comment += " Risk:" + DoubleToString(InpStopLossRiskPercent, 0) + "%";
+         
+         if(trade.Sell(lotSize, _Symbol, 0, 0, tp2, comment))
+         {
+            ulong ticket = trade.ResultOrder();
+            
+            // Get actual entry price
+            if(PositionSelectByTicket(ticket))
+            {
+               double actualEntry = PositionGetDouble(POSITION_PRICE_OPEN);
+               
+               // Calculate ORB-based SL price
+               double sl = rangeHigh + slOffset;
+               sl = NormalizeDouble(sl, digits);
+               
+               // Add ORB-based SL as virtual (always)
+               AddVirtualStopLoss(ticket, sl, false);
+               
+               Print("✓ Short opened - Entry: ", DoubleToString(actualEntry, digits), 
+                     " Virtual ORB-SL: ", DoubleToString(sl, digits), 
+                     " TP1: ", DoubleToString(tp1, digits), " (", tp1Percent, "%)", 
+                     " TP2: ", DoubleToString(tp2, digits), " (", tp2Percent, "%)", 
+                     " Lots: ", DoubleToString(lotSize, 2));
+               
+               // Store ticket for partial TP monitoring
+               MonitorPartialTP(ticket, tp1, tp1ClosePercent, false);
+               
+               // Add risk-based SL monitoring if enabled
+               if(InpStopLossRiskPercent > 0)
+               {
+                  double accountBalance = AccountInfoDouble(ACCOUNT_BALANCE);
+                  double riskAmount = accountBalance * (InpRiskPercent / 100.0);
+                  double maxLoss = riskAmount * (InpStopLossRiskPercent / 100.0);
+                  AddRiskBasedSL(ticket, maxLoss);
+               }
+            }
+         }
+         
+         tradesCountToday++;
+         tradeTakenToday = true;
+      }
+   }
+}
+
+//+------------------------------------------------------------------+
+//| Calculate Lot Size Based on Risk Percentage                        |
+//+------------------------------------------------------------------+
+double CalculateLotSize(double slDistance)
+{
+   double accountBalance = AccountInfoDouble(ACCOUNT_BALANCE);
+   double riskAmount = accountBalance * (InpRiskPercent / 100.0);
+   
+   double tickValue = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_VALUE);
+   double tickSize = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_SIZE);
+   double minLot = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MIN);
+   double maxLot = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MAX);
+   double lotStep = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_STEP);
+   
+   // Calculate lot size based on risk
+   double lotSize = (riskAmount / slDistance) / (tickValue / tickSize);
+   
+   // Normalize to lot step
+   lotSize = MathFloor(lotSize / lotStep) * lotStep;
+   
+   // Ensure within broker limits
+   if(lotSize < minLot) lotSize = minLot;
+   if(lotSize > maxLot) lotSize = maxLot;
+   
+   return lotSize;
+}
+
+//+------------------------------------------------------------------+
+//| Check if Range Size is Valid                                       |
+//+------------------------------------------------------------------+
+bool IsValidRangeSize(int dayOfWeek)
+{
+   double rangeSize = rangeHigh - rangeLow;
+   double rangeSizePercent = (rangeSize / rangeHigh) * 100.0;
+   
+   double minSize = GetMinORBSize(dayOfWeek);
+   double maxSize = GetMaxORBSize(dayOfWeek);
+   
+   // Truncate to 3 decimals without rounding
+   double truncatedPercent = MathFloor(rangeSizePercent * 1000) / 1000;
+   
+   // Check minimum range size
+   if(minSize > 0 && rangeSizePercent < minSize)
+   {
+      Print("Range too small: ", StringFormat("%.3f", truncatedPercent), "% (min: ", minSize, "%)");
+      return false;
+   }
+   
+   // Check maximum range size
+   if(maxSize > 0 && rangeSizePercent > maxSize)
+   {
+      Print("Range too large: ", StringFormat("%.3f", truncatedPercent), "% (max: ", maxSize, "%)");
+      return false;
+   }
+   
+   return true;
+}
+
+//+------------------------------------------------------------------+
+//| Check if Trade Passes All Filters                                  |
+//+------------------------------------------------------------------+
+bool PassesFilters(bool isLong)
+{
+   // Spread Filter
+   if(InpMaxSpread > 0)
+   {
+      double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
+      double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+      double spread = (ask - bid) / SymbolInfoDouble(_Symbol, SYMBOL_POINT);
+      
+      if(spread > InpMaxSpread)
+      {
+         Print("Trade rejected: Spread too high (", DoubleToString(spread, 1), " points, max: ", InpMaxSpread, ")");
+         return false;
+      }
+   }
+   
+   return true;
+}
+
+//+------------------------------------------------------------------+
+//| Check if Trading is Allowed on This Day                            |
+//+------------------------------------------------------------------+
+bool IsTradingDayAllowed(int dayOfWeek)
+{
+   // dayOfWeek: 0=Sunday, 1=Monday, 2=Tuesday, 3=Wednesday, 4=Thursday, 5=Friday, 6=Saturday
+   switch(dayOfWeek)
+   {
+      case 1: return InpTradeMonday;
+      case 2: return InpTradeTuesday;
+      case 3: return InpTradeWednesday;
+      case 4: return InpTradeThursday;
+      case 5: return InpTradeFriday;
+      default: return false; // Don't trade on weekends
+   }
+}
+
+//+------------------------------------------------------------------+
+//| Get Breakout Setting for Day                                       |
+//+------------------------------------------------------------------+
+bool GetBreakoutSetting(int dayOfWeek)
+{
+   switch(dayOfWeek)
+   {
+      case 1: return InpMondayBreakout;
+      case 2: return InpTuesdayBreakout;
+      case 3: return InpWednesdayBreakout;
+      case 4: return InpThursdayBreakout;
+      case 5: return InpFridayBreakout;
+      default: return false;
+   }
+}
+
+//+------------------------------------------------------------------+
+//| Get Breakdown Setting for Day                                      |
+//+------------------------------------------------------------------+
+bool GetBreakdownSetting(int dayOfWeek)
+{
+   switch(dayOfWeek)
+   {
+      case 1: return InpMondayBreakdown;
+      case 2: return InpTuesdayBreakdown;
+      case 3: return InpWednesdayBreakdown;
+      case 4: return InpThursdayBreakdown;
+      case 5: return InpFridayBreakdown;
+      default: return false;
+   }
+}
+
+//+------------------------------------------------------------------+
+//| Get TP1 for Day                                                    |
+//+------------------------------------------------------------------+
+double GetTP1(int dayOfWeek)
+{
+   switch(dayOfWeek)
+   {
+      case 1: return InpMondayTP1;
+      case 2: return InpTuesdayTP1;
+      case 3: return InpWednesdayTP1;
+      case 4: return InpThursdayTP1;
+      case 5: return InpFridayTP1;
+      default: return 40.0;
+   }
+}
+
+//+------------------------------------------------------------------+
+//| Get TP1 Close Percent for Day                                      |
+//+------------------------------------------------------------------+
+double GetTP1ClosePercent(int dayOfWeek)
+{
+   switch(dayOfWeek)
+   {
+      case 1: return InpMondayTP1ClosePercent;
+      case 2: return InpTuesdayTP1ClosePercent;
+      case 3: return InpWednesdayTP1ClosePercent;
+      case 4: return InpThursdayTP1ClosePercent;
+      case 5: return InpFridayTP1ClosePercent;
+      default: return 50.0;
+   }
+}
+
+//+------------------------------------------------------------------+
+//| Get TP2 for Day                                                    |
+//+------------------------------------------------------------------+
+double GetTP2(int dayOfWeek)
+{
+   switch(dayOfWeek)
+   {
+      case 1: return InpMondayTP2;
+      case 2: return InpTuesdayTP2;
+      case 3: return InpWednesdayTP2;
+      case 4: return InpThursdayTP2;
+      case 5: return InpFridayTP2;
+      default: return 80.0;
+   }
+}
+
+//+------------------------------------------------------------------+
+//| Get Stop Loss for Day                                              |
+//+------------------------------------------------------------------+
+double GetStopLoss(int dayOfWeek)
+{
+   switch(dayOfWeek)
+   {
+      case 1: return InpMondayStopLoss;
+      case 2: return InpTuesdayStopLoss;
+      case 3: return InpWednesdayStopLoss;
+      case 4: return InpThursdayStopLoss;
+      case 5: return InpFridayStopLoss;
+      default: return 100.0;
+   }
+}
+
+//+------------------------------------------------------------------+
+//| Get Min ORB Size for Day                                           |
+//+------------------------------------------------------------------+
+double GetMinORBSize(int dayOfWeek)
+{
+   switch(dayOfWeek)
+   {
+      case 1: return InpMondayMinORBSize;
+      case 2: return InpTuesdayMinORBSize;
+      case 3: return InpWednesdayMinORBSize;
+      case 4: return InpThursdayMinORBSize;
+      case 5: return InpFridayMinORBSize;
+      default: return 0.0;
+   }
+}
+
+//+------------------------------------------------------------------+
+//| Get Max ORB Size for Day                                           |
+//+------------------------------------------------------------------+
+double GetMaxORBSize(int dayOfWeek)
+{
+   switch(dayOfWeek)
+   {
+      case 1: return InpMondayMaxORBSize;
+      case 2: return InpTuesdayMaxORBSize;
+      case 3: return InpWednesdayMaxORBSize;
+      case 4: return InpThursdayMaxORBSize;
+      case 5: return InpFridayMaxORBSize;
+      default: return 0.5;
+   }
+}
+
+//+------------------------------------------------------------------+
+//| Close All Positions                                                |
+//+------------------------------------------------------------------+
+void CloseAllPositions()
+{
+   int closedCount = 0;
+   for(int i = PositionsTotal() - 1; i >= 0; i--)
+   {
+      ulong ticket = PositionGetTicket(i);
+      if(PositionSelectByTicket(ticket))
+      {
+         if(PositionGetString(POSITION_SYMBOL) == _Symbol)
+         {
+            double profit = PositionGetDouble(POSITION_PROFIT);
+            
+            if(trade.PositionClose(ticket))
+            {
+               Print("🕐 [EOD-CLOSE] Ticket #", ticket, " | P&L: $", DoubleToString(profit, 2));
+               closedCount++;
+            }
+         }
+      }
+   }
+   
+   if(closedCount > 0)
+   {
+      Print("📊 Total positions closed at end of day: ", closedCount);
+   }
+}
+
+//+------------------------------------------------------------------+
+//| Add Virtual Stop Loss                                              |
+//+------------------------------------------------------------------+
+void AddVirtualStopLoss(ulong ticket, double slPrice, bool isLong)
+{
+   ArrayResize(virtualStops, virtualStopsCount + 1);
+   virtualStops[virtualStopsCount].ticket = ticket;
+   virtualStops[virtualStopsCount].slPrice = slPrice;
+   virtualStops[virtualStopsCount].isLong = isLong;
+   virtualStopsCount++;
+   
+   Print("🛡️ Virtual SL added for ticket #", ticket, " at ", slPrice, " (", (isLong ? "Long" : "Short"), ")");
+}
+
+//+------------------------------------------------------------------+
+//| Check Virtual Stop Losses                                          |
+//+------------------------------------------------------------------+
+void CheckVirtualStopLosses()
+{
+   if(virtualStopsCount == 0)
+      return;
+   
+   double currentBid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+   double currentAsk = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
+   
+   for(int i = virtualStopsCount - 1; i >= 0; i--)
+   {
+      ulong ticket = virtualStops[i].ticket;
+      double slPrice = virtualStops[i].slPrice;
+      bool isLong = virtualStops[i].isLong;
+      
+      // Check if position still exists
+      if(!PositionSelectByTicket(ticket))
+      {
+         // Position closed, remove from virtual stops
+         RemoveVirtualStopLoss(i);
+         continue;
+      }
+      
+      // Check if virtual SL is hit
+      bool slHit = false;
+      if(isLong && currentBid <= slPrice)
+      {
+         slHit = true;
+         Print("🚨 Virtual SL HIT for Long #", ticket, " - Bid: ", currentBid, " <= SL: ", slPrice);
+      }
+      else if(!isLong && currentAsk >= slPrice)
+      {
+         slHit = true;
+         Print("🚨 Virtual SL HIT for Short #", ticket, " - Ask: ", currentAsk, " >= SL: ", slPrice);
+      }
+      
+      if(slHit)
+      {
+         // Close position
+         double profit = PositionGetDouble(POSITION_PROFIT);
+         
+         if(trade.PositionClose(ticket))
+         {
+            Print("🛡️ [ORB-SL] Ticket #", ticket, " | Price: ", DoubleToString(slPrice, (int)SymbolInfoInteger(_Symbol, SYMBOL_DIGITS)), " | Loss: $", DoubleToString(profit, 2));
+            RemoveVirtualStopLoss(i);
+         }
+         else
+         {
+            Print("❌ Failed to close position #", ticket, " - Error: ", GetLastError());
+         }
+      }
+   }
+}
+
+//+------------------------------------------------------------------+
+//| Remove Virtual Stop Loss                                           |
+//+------------------------------------------------------------------+
+void RemoveVirtualStopLoss(int index)
+{
+   if(index < 0 || index >= virtualStopsCount)
+      return;
+   
+   // Shift array elements
+   for(int i = index; i < virtualStopsCount - 1; i++)
+   {
+      virtualStops[i] = virtualStops[i + 1];
+   }
+   
+   virtualStopsCount--;
+   ArrayResize(virtualStops, virtualStopsCount);
+}
+
+//+------------------------------------------------------------------+
+//| Monitor Partial Take Profit                                        |
+//+------------------------------------------------------------------+
+void MonitorPartialTP(ulong ticket, double tp1Price, double closePercent, bool isLong)
+{
+   ArrayResize(partialTPs, partialTPsCount + 1);
+   partialTPs[partialTPsCount].ticket = ticket;
+   partialTPs[partialTPsCount].tp1Price = tp1Price;
+   partialTPs[partialTPsCount].closePercent = closePercent;
+   partialTPs[partialTPsCount].isLong = isLong;
+   partialTPs[partialTPsCount].tp1Hit = false;
+   partialTPsCount++;
+   
+   Print("📊 Monitoring partial TP for ticket #", ticket, " - TP1: ", tp1Price, " Close: ", closePercent, "%");
+}
+
+//+------------------------------------------------------------------+
+//| Check Partial Take Profits                                         |
+//+------------------------------------------------------------------+
+void CheckPartialTakeProfits()
+{
+   if(partialTPsCount == 0)
+      return;
+   
+   double currentBid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+   double currentAsk = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
+   
+   for(int i = partialTPsCount - 1; i >= 0; i--)
+   {
+      ulong ticket = partialTPs[i].ticket;
+      double tp1Price = partialTPs[i].tp1Price;
+      double closePercent = partialTPs[i].closePercent;
+      bool isLong = partialTPs[i].isLong;
+      bool tp1Hit = partialTPs[i].tp1Hit;
+      
+      // Check if position still exists
+      if(!PositionSelectByTicket(ticket))
+      {
+         // Position closed, remove from monitoring
+         RemovePartialTP(i);
+         continue;
+      }
+      
+      // Double-check position still exists before attempting partial close
+      if(!PositionSelectByTicket(ticket))
+      {
+         RemovePartialTP(i);
+         continue;
+      }
+      
+      // Check if TP1 is hit (only once)
+      if(!tp1Hit)
+      {
+         bool tp1Reached = false;
+         if(isLong && currentBid >= tp1Price)
+         {
+            tp1Reached = true;
+            Print("🎯 TP1 HIT for Long #", ticket, " - Bid: ", currentBid, " >= TP1: ", tp1Price);
+         }
+         else if(!isLong && currentAsk <= tp1Price)
+         {
+            tp1Reached = true;
+            Print("🎯 TP1 HIT for Short #", ticket, " - Ask: ", currentAsk, " <= TP1: ", tp1Price);
+         }
+         
+         if(tp1Reached)
+         {
+            // Close partial position
+            double currentVolume = PositionGetDouble(POSITION_VOLUME);
+            double lotStep = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_STEP);
+            double minLot = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MIN);
+            
+            // Calculate close volume and normalize to lot step
+            double closeVolume = MathFloor((currentVolume * closePercent / 100.0) / lotStep) * lotStep;
+            
+            // Ensure we don't close more than available
+            if(closeVolume > currentVolume)
+               closeVolume = currentVolume;
+            
+            // Ensure minimum lot
+            if(closeVolume < minLot)
+               closeVolume = minLot;
+            
+            // Ensure remaining volume is also valid
+            double remainingVolume = currentVolume - closeVolume;
+            if(remainingVolume > 0 && remainingVolume < minLot)
+            {
+               // Adjust close volume to leave at least minLot
+               closeVolume = currentVolume - minLot;
+               if(closeVolume < minLot)
+               {
+                  Print("⚠ Cannot partial close - remaining volume would be too small");
+                  partialTPs[i].tp1Hit = true;  // Mark as hit to avoid retry
+                  continue;
+               }
+            }
+            
+            if(trade.PositionClosePartial(ticket, closeVolume))
+            {
+               double partialProfit = PositionGetDouble(POSITION_PROFIT) * (closePercent / 100.0);
+               Print("✓ [TP1-PARTIAL] Ticket #", ticket, 
+                     " Closed: ", DoubleToString(closeVolume, 2), " lots (", closePercent, "%)", 
+                     " Remaining: ", DoubleToString(remainingVolume, 2), " lots",
+                     " Profit: $", DoubleToString(partialProfit, 2));
+               partialTPs[i].tp1Hit = true;
+            }
+            else
+            {
+               Print("❌ Failed to close partial TP1 - Ticket #", ticket, " Error: ", GetLastError());
+               // Mark as hit anyway to avoid infinite retries
+               partialTPs[i].tp1Hit = true;
+            }
+         }
+      }
+   }
+}
+
+//+------------------------------------------------------------------+
+//| Remove Partial TP                                                  |
+//+------------------------------------------------------------------+
+void RemovePartialTP(int index)
+{
+   if(index < 0 || index >= partialTPsCount)
+      return;
+   
+   // Shift array elements
+   for(int i = index; i < partialTPsCount - 1; i++)
+   {
+      partialTPs[i] = partialTPs[i + 1];
+   }
+   
+   partialTPsCount--;
+   ArrayResize(partialTPs, partialTPsCount);
+}
+
+//+------------------------------------------------------------------+
+//| Add Risk-Based Stop Loss                                           |
+//+------------------------------------------------------------------+
+void AddRiskBasedSL(ulong ticket, double maxLoss)
+{
+   ArrayResize(riskBasedSLs, riskBasedSLsCount + 1);
+   riskBasedSLs[riskBasedSLsCount].ticket = ticket;
+   riskBasedSLs[riskBasedSLsCount].maxLoss = maxLoss;
+   riskBasedSLsCount++;
+   
+   Print("💰 Risk-based SL added for ticket #", ticket, " - Max Loss: $", DoubleToString(maxLoss, 2));
+}
+
+//+------------------------------------------------------------------+
+//| Check Risk-Based Stop Losses                                       |
+//+------------------------------------------------------------------+
+void CheckRiskBasedStopLosses()
+{
+   if(riskBasedSLsCount == 0)
+      return;
+   
+   for(int i = riskBasedSLsCount - 1; i >= 0; i--)
+   {
+      ulong ticket = riskBasedSLs[i].ticket;
+      double maxLoss = riskBasedSLs[i].maxLoss;
+      
+      // Check if position still exists
+      if(!PositionSelectByTicket(ticket))
+      {
+         // Position closed, remove from monitoring
+         RemoveRiskBasedSL(i);
+         continue;
+      }
+      
+      // Get current profit/loss
+      double currentProfit = PositionGetDouble(POSITION_PROFIT);
+      
+      // Check if loss exceeds max allowed (use negative value)
+      if(currentProfit <= -maxLoss)
+      {
+         Print("🚨 RISK-BASED SL HIT - Ticket #", ticket, " Loss: $", DoubleToString(currentProfit, 2), " Max Allowed: $", DoubleToString(maxLoss, 2));
+         
+         // Close position
+         if(trade.PositionClose(ticket))
+         {
+            Print("💰 [RISK-SL ", InpStopLossRiskPercent, "%] Ticket #", ticket, " | Loss: $", DoubleToString(currentProfit, 2));
+            RemoveRiskBasedSL(i);
+         }
+         else
+         {
+            Print("❌ Failed to close position #", ticket, " - Error: ", GetLastError());
+         }
+      }
+   }
+}
+
+//+------------------------------------------------------------------+
+//| Remove Risk-Based SL                                               |
+//+------------------------------------------------------------------+
+void RemoveRiskBasedSL(int index)
+{
+   if(index < 0 || index >= riskBasedSLsCount)
+      return;
+   
+   // Shift array elements
+   for(int i = index; i < riskBasedSLsCount - 1; i++)
+   {
+      riskBasedSLs[i] = riskBasedSLs[i + 1];
+   }
+   
+   riskBasedSLsCount--;
+   ArrayResize(riskBasedSLs, riskBasedSLsCount);
+}
+//+------------------------------------------------------------------+
