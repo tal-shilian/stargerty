@@ -1,0 +1,19 @@
+{
+  "enabled": true,
+  "name": "Prevent Duplicate Log Output",
+  "description": "Ensures that Print() and log statements only execute once to avoid repeated log messages",
+  "version": "1",
+  "when": {
+    "type": "fileEdited",
+    "patterns": [
+      "*.mql5",
+      "*.mql",
+      "*.pine",
+      "*.cs"
+    ]
+  },
+  "then": {
+    "type": "askAgent",
+    "prompt": "Review any Print() or log statements in the file changes. Ensure they are protected with flags or conditions so the same message doesn't print multiple times during execution. Add static bool flags or other mechanisms to ensure each unique log message only prints once per run."
+  }
+}

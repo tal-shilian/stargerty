@@ -1,0 +1,21 @@
+{
+  "enabled": true,
+  "name": "Limit Decimal Places",
+  "description": "Monitors file edits and creations to ensure that all numeric values are formatted with no more than two decimal places",
+  "version": "1",
+  "when": {
+    "type": "fileEdited",
+    "patterns": [
+      "*.mql5",
+      "*.mql",
+      "*.pine",
+      "*.cs",
+      "*.txt",
+      "*.md"
+    ]
+  },
+  "then": {
+    "type": "askAgent",
+    "prompt": "Review the file changes and ensure all numeric values use no more than two decimal places. If you find numbers with more than two decimal places, suggest corrections to round or truncate them to two decimal places maximum."
+  }
+}

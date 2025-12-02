@@ -9,6 +9,7 @@
 input group "=== General Settings ==="
 input double MaxLoss = 900.0;                    // Max Loss $
 input double LotSize = 0.1;                      // Lot Size
+input bool UseVirtualTPSL = true;                // Use Virtual TP/SL
 
 input group "=== Monday Settings ==="
 input bool TradeOnMonday = true;                 // Trade on Monday
@@ -70,24 +71,43 @@ input bool Friday_ActivateMoveStop = true;       // Activate Move Stop?
 input double Friday_TriggerPercent = 85.0;       // Trigger %
 input double Friday_TargetPercent = 20.0;        // Target %
 
+input group "=== Session Settings ==="
+input string TimezoneInfo = "Broker Server Time"; // Timezone (info only)
+input int SessionStartHour = 9;                  // Session Start Hour
+input int SessionStartMinute = 30;               // Session Start Minute
+input int SessionEndHour = 16;                   // Session End Hour
+input int SessionEndMinute = 0;                  // Session End Minute
+
 input group "=== ORB Time Settings ==="
 input int ORB_StartHour = 9;                     // ORB Start Hour
 input int ORB_StartMinute = 30;                  // ORB Start Minute
-input int ORB_DurationMinutes = 60;              // ORB Duration (minutes)
-input int SessionCloseHour = 16;                 // Session Close Hour
-input int SessionCloseMinute = 30;               // Session Close Minute
-input int GMTOffset = 0;                         // GMT Offset (broker time)
+input int ORB_EndHour = 9;                       // ORB End Hour
+input int ORB_EndMinute = 45;                    // ORB End Minute
 
 // Global variables
 double orbHigh = 0, orbLow = 0;
 bool orbCalculated = false;
+bool orbMessagePrinted = false;
 datetime orbStartTime = 0;
 datetime orbEndTime = 0;
-double dailyLoss = 0;
+double dailyProfit = 0;
 datetime lastResetDate = 0;
 bool breakoutTradeOpened = false;
 bool breakdownTradeOpened = false;
 bool sessionClosed = false;
+bool maxLossPrinted = false;
+int lastDealsTotal = 0;
+
+// Virtual TP/SL tracking
+struct VirtualLevels
+{
+   ulong ticket;
+   double virtualTP;
+   double virtualSL;
+   double triggerPrice;
+   bool trailingActivated;
+};
+VirtualLevels virtualPositions[];
 
 //+------------------------------------------------------------------+
 //| Expert initialization function                                   |
@@ -120,20 +140,45 @@ void OnTick()
    
    if(currentDate != lastResetDate)
    {
-      dailyLoss = 0;
+      dailyProfit = 0;
       lastResetDate = currentDate;
       orbCalculated = false;
+      orbMessagePrinted = false;
       breakoutTradeOpened = false;
       breakdownTradeOpened = false;
       sessionClosed = false;
+      maxLossPrinted = false;
+      lastDealsTotal = 0;
    }
    
+   // Calculate daily profit from closed deals
+   CalculateDailyProfit();
+   
    // Check max loss
-   if(dailyLoss >= MaxLoss)
+   if(dailyProfit <= -MaxLoss)
    {
-      Print("Max daily loss reached: $", dailyLoss);
+      if(!maxLossPrinted)
+      {
+         Print("Max daily loss reached: $", MathAbs(dailyProfit));
+         maxLossPrinted = true;
+      }
       return;
    }
+   
+   // Check if we're within session time
+   datetime sessionStart = StringToTime(IntegerToString(timeStruct.year) + "." + 
+                                        IntegerToString(timeStruct.mon) + "." + 
+                                        IntegerToString(timeStruct.day) + " " +
+                                        IntegerToString(SessionStartHour) + ":" + 
+                                        IntegerToString(SessionStartMinute));
+   
+   datetime sessionEnd = StringToTime(IntegerToString(timeStruct.year) + "." + 
+                                      IntegerToString(timeStruct.mon) + "." + 
+                                      IntegerToString(timeStruct.day) + " " +
+                                      IntegerToString(SessionEndHour) + ":" + 
+                                      IntegerToString(SessionEndMinute));
+   
+   if(TimeCurrent() < sessionStart || TimeCurrent() > sessionEnd) return;
    
    // Check if today is a trading day
    int dayOfWeek = timeStruct.day_of_week;
@@ -164,6 +209,44 @@ void OnTick()
 }
 
 //+------------------------------------------------------------------+
+//| Calculate daily profit from closed deals                         |
+//+------------------------------------------------------------------+
+void CalculateDailyProfit()
+{
+   int currentDealsTotal = HistoryDealsTotal();
+   
+   // Only recalculate if new deals were added
+   if(currentDealsTotal == lastDealsTotal) return;
+   
+   MqlDateTime timeStruct;
+   TimeToStruct(TimeCurrent(), timeStruct);
+   datetime dayStart = StringToTime(IntegerToString(timeStruct.year) + "." + 
+                                    IntegerToString(timeStruct.mon) + "." + 
+                                    IntegerToString(timeStruct.day) + " 00:00");
+   
+   HistorySelect(dayStart, TimeCurrent());
+   
+   dailyProfit = 0;
+   for(int i = 0; i < HistoryDealsTotal(); i++)
+   {
+      ulong ticket = HistoryDealGetTicket(i);
+      if(ticket > 0)
+      {
+         if(HistoryDealGetInteger(ticket, DEAL_MAGIC) == 123456 &&
+            HistoryDealGetString(ticket, DEAL_SYMBOL) == _Symbol &&
+            HistoryDealGetInteger(ticket, DEAL_ENTRY) == DEAL_ENTRY_OUT)
+         {
+            dailyProfit += HistoryDealGetDouble(ticket, DEAL_PROFIT);
+            dailyProfit += HistoryDealGetDouble(ticket, DEAL_SWAP);
+            dailyProfit += HistoryDealGetDouble(ticket, DEAL_COMMISSION);
+         }
+      }
+   }
+   
+   lastDealsTotal = currentDealsTotal;
+}
+
+//+------------------------------------------------------------------+
 //| Calculate Opening Range                                          |
 //+------------------------------------------------------------------+
 void CalculateORB()
@@ -178,13 +261,18 @@ void CalculateORB()
                                     IntegerToString(ORB_StartHour) + ":" + 
                                     IntegerToString(ORB_StartMinute));
    
-   datetime orbEnd = orbStart + ORB_DurationMinutes * 60;
+   datetime orbEnd = StringToTime(IntegerToString(timeStruct.year) + "." + 
+                                  IntegerToString(timeStruct.mon) + "." + 
+                                  IntegerToString(timeStruct.day) + " " +
+                                  IntegerToString(ORB_EndHour) + ":" + 
+                                  IntegerToString(ORB_EndMinute));
    
    if(orbStartTime != orbStart)
    {
       orbStartTime = orbStart;
       orbEndTime = orbEnd;
       orbCalculated = false;
+      orbMessagePrinted = false;
       orbHigh = 0;
       orbLow = 0;
    }
@@ -221,11 +309,19 @@ void CalculateORB()
       if(orbSize >= minSize && orbSize <= maxSize)
       {
          orbCalculated = true;
-         Print("ORB calculated - High: ", orbHigh, " Low: ", orbLow, " Size: ", orbSize, "%");
+         if(!orbMessagePrinted)
+         {
+            Print("ORB calculated - High: ", orbHigh, " Low: ", orbLow, " Size: ", orbSize, "%");
+            orbMessagePrinted = true;
+         }
       }
       else
       {
-         Print("ORB size out of range: ", orbSize, "% (min: ", minSize, "%, max: ", maxSize, "%)");
+         if(!orbMessagePrinted)
+         {
+            Print("ORB size out of range: ", orbSize, "% (min: ", minSize, "%, max: ", maxSize, "%)");
+            orbMessagePrinted = true;
+         }
          orbCalculated = false;
       }
    }
@@ -286,10 +382,11 @@ void CheckTradeSignals(int dayOfWeek)
    // Check for breakout (buy signal)
    if(tradeBreakout && !breakoutTradeOpened && currentPrice > orbHigh)
    {
-      double tp = orbHigh + (orbRange * profitTarget / 100.0);
-      double sl = orbHigh - (orbRange * stopLoss / 100.0);
+      double tp = NormalizeDouble(orbHigh + (orbRange * profitTarget / 100.0), _Digits);
+      double sl = NormalizeDouble(orbHigh - (orbRange * stopLoss / 100.0), _Digits);
       
-      if(OpenTrade(ORDER_TYPE_BUY, orbHigh, sl, tp))
+      ulong ticket = OpenTrade(ORDER_TYPE_BUY, orbHigh, sl, tp, dayOfWeek);
+      if(ticket > 0)
       {
          breakoutTradeOpened = true;
       }
@@ -298,10 +395,11 @@ void CheckTradeSignals(int dayOfWeek)
    // Check for breakdown (sell signal)
    if(tradeBreakdown && !breakdownTradeOpened && currentPrice < orbLow)
    {
-      double tp = orbLow - (orbRange * profitTarget / 100.0);
-      double sl = orbLow + (orbRange * stopLoss / 100.0);
+      double tp = NormalizeDouble(orbLow - (orbRange * profitTarget / 100.0), _Digits);
+      double sl = NormalizeDouble(orbLow + (orbRange * stopLoss / 100.0), _Digits);
       
-      if(OpenTrade(ORDER_TYPE_SELL, orbLow, sl, tp))
+      ulong ticket = OpenTrade(ORDER_TYPE_SELL, orbLow, sl, tp, dayOfWeek);
+      if(ticket > 0)
       {
          breakdownTradeOpened = true;
       }
@@ -311,31 +409,136 @@ void CheckTradeSignals(int dayOfWeek)
 //+------------------------------------------------------------------+
 //| Open a trade                                                     |
 //+------------------------------------------------------------------+
-bool OpenTrade(ENUM_ORDER_TYPE orderType, double entry, double sl, double tp)
+ulong OpenTrade(ENUM_ORDER_TYPE orderType, double entry, double sl, double tp, int dayOfWeek)
 {
    MqlTradeRequest request = {};
    MqlTradeResult result = {};
    
    request.action = TRADE_ACTION_DEAL;
    request.symbol = _Symbol;
-   request.volume = LotSize;
+   request.volume = NormalizeDouble(LotSize, 2);
    request.type = orderType;
-   request.price = (orderType == ORDER_TYPE_BUY) ? SymbolInfoDouble(_Symbol, SYMBOL_ASK) : SymbolInfoDouble(_Symbol, SYMBOL_BID);
-   request.sl = sl;
-   request.tp = tp;
+   request.price = NormalizeDouble((orderType == ORDER_TYPE_BUY) ? SymbolInfoDouble(_Symbol, SYMBOL_ASK) : SymbolInfoDouble(_Symbol, SYMBOL_BID), _Digits);
    request.deviation = 10;
    request.magic = 123456;
    request.comment = "ORB Strategy";
    
-   if(OrderSend(request, result))
+   // Set TP/SL based on virtual mode
+   if(!UseVirtualTPSL)
+   {
+      request.sl = NormalizeDouble(sl, _Digits);
+      request.tp = NormalizeDouble(tp, _Digits);
+   }
+   
+   // Determine supported filling mode
+   int filling = (int)SymbolInfoInteger(_Symbol, SYMBOL_FILLING_MODE);
+   
+   if((filling & SYMBOL_FILLING_IOC) == SYMBOL_FILLING_IOC)
+      request.type_filling = ORDER_FILLING_IOC;
+   else if((filling & SYMBOL_FILLING_FOK) == SYMBOL_FILLING_FOK)
+      request.type_filling = ORDER_FILLING_FOK;
+   else
+      request.type_filling = ORDER_FILLING_RETURN;
+   
+   // Send order
+   bool success = OrderSend(request, result);
+   
+   // If filling mode error, try alternatives
+   if(!success && result.retcode == 10030)
+   {
+      if(request.type_filling != ORDER_FILLING_IOC && (filling & SYMBOL_FILLING_IOC) == SYMBOL_FILLING_IOC)
+      {
+         request.type_filling = ORDER_FILLING_IOC;
+         success = OrderSend(request, result);
+      }
+      
+      if(!success && request.type_filling != ORDER_FILLING_FOK && (filling & SYMBOL_FILLING_FOK) == SYMBOL_FILLING_FOK)
+      {
+         request.type_filling = ORDER_FILLING_FOK;
+         success = OrderSend(request, result);
+      }
+      
+      if(!success && request.type_filling != ORDER_FILLING_RETURN)
+      {
+         request.type_filling = ORDER_FILLING_RETURN;
+         success = OrderSend(request, result);
+      }
+   }
+   
+   if(result.retcode == 10009 || result.retcode == 10008) // Trade successful
    {
       Print("Trade opened: ", EnumToString(orderType), " at ", request.price, " SL: ", sl, " TP: ", tp);
-      return true;
+      
+      // Store virtual TP/SL if enabled
+      if(UseVirtualTPSL && result.order > 0)
+      {
+         // Get trigger and target percentages for trailing stop
+         bool activateMoveStop;
+         double triggerPercent, targetPercent;
+         
+         switch(dayOfWeek)
+         {
+            case 1:
+               activateMoveStop = Monday_ActivateMoveStop;
+               triggerPercent = Monday_TriggerPercent;
+               targetPercent = Monday_TargetPercent;
+               break;
+            case 2:
+               activateMoveStop = Tuesday_ActivateMoveStop;
+               triggerPercent = Tuesday_TriggerPercent;
+               targetPercent = Tuesday_TargetPercent;
+               break;
+            case 3:
+               activateMoveStop = Wednesday_ActivateMoveStop;
+               triggerPercent = Wednesday_TriggerPercent;
+               targetPercent = Wednesday_TargetPercent;
+               break;
+            case 4:
+               activateMoveStop = Thursday_ActivateMoveStop;
+               triggerPercent = Thursday_TriggerPercent;
+               targetPercent = Thursday_TargetPercent;
+               break;
+            case 5:
+               activateMoveStop = Friday_ActivateMoveStop;
+               triggerPercent = Friday_TriggerPercent;
+               targetPercent = Friday_TargetPercent;
+               break;
+            default:
+               activateMoveStop = false;
+               triggerPercent = 85.0;
+               targetPercent = 20.0;
+         }
+         
+         // Find the position ticket
+         for(int i = 0; i < PositionsTotal(); i++)
+         {
+            ulong ticket = PositionGetTicket(i);
+            if(PositionGetInteger(POSITION_MAGIC) == 123456 && PositionGetString(POSITION_SYMBOL) == _Symbol)
+            {
+               int size = ArraySize(virtualPositions);
+               ArrayResize(virtualPositions, size + 1);
+               virtualPositions[size].ticket = ticket;
+               virtualPositions[size].virtualTP = tp;
+               virtualPositions[size].virtualSL = sl;
+               virtualPositions[size].trailingActivated = false;
+               
+               if(activateMoveStop)
+               {
+                  double openPrice = PositionGetDouble(POSITION_PRICE_OPEN);
+                  double targetDistance = MathAbs(tp - openPrice);
+                  virtualPositions[size].triggerPrice = openPrice + (orderType == ORDER_TYPE_BUY ? 1 : -1) * (targetDistance * triggerPercent / 100.0);
+               }
+               break;
+            }
+         }
+      }
+      
+      return result.order;
    }
    else
    {
       Print("Trade failed: ", result.retcode, " - ", result.comment);
-      return false;
+      return 0;
    }
 }
 
@@ -344,6 +547,14 @@ bool OpenTrade(ENUM_ORDER_TYPE orderType, double entry, double sl, double tp)
 //+------------------------------------------------------------------+
 void ManagePositions(int dayOfWeek)
 {
+   // Handle virtual TP/SL
+   if(UseVirtualTPSL)
+   {
+      CheckVirtualTPSL(dayOfWeek);
+      return;
+   }
+   
+   // Original broker TP/SL management
    for(int i = PositionsTotal() - 1; i >= 0; i--)
    {
       ulong ticket = PositionGetTicket(i);
@@ -352,17 +563,10 @@ void ManagePositions(int dayOfWeek)
       if(PositionGetString(POSITION_SYMBOL) != _Symbol) continue;
       if(PositionGetInteger(POSITION_MAGIC) != 123456) continue;
       
-      double positionProfit = PositionGetDouble(POSITION_PROFIT);
       double positionOpenPrice = PositionGetDouble(POSITION_PRICE_OPEN);
       double currentSL = PositionGetDouble(POSITION_SL);
       double currentTP = PositionGetDouble(POSITION_TP);
       ENUM_POSITION_TYPE posType = (ENUM_POSITION_TYPE)PositionGetInteger(POSITION_TYPE);
-      
-      // Track losses
-      if(positionProfit < 0)
-      {
-         dailyLoss += MathAbs(positionProfit);
-      }
       
       // Get day-specific trailing stop settings
       bool activateMoveStop = false;
@@ -409,8 +613,8 @@ void ManagePositions(int dayOfWeek)
       if(posType == POSITION_TYPE_BUY)
       {
          double targetDistance = currentTP - positionOpenPrice;
-         double triggerPrice = positionOpenPrice + (targetDistance * triggerPercent / 100.0);
-         double newSL = positionOpenPrice + (orbRange * targetPercent / 100.0);
+         double triggerPrice = NormalizeDouble(positionOpenPrice + (targetDistance * triggerPercent / 100.0), _Digits);
+         double newSL = NormalizeDouble(positionOpenPrice + (orbRange * targetPercent / 100.0), _Digits);
          
          // Move stop to lock in profit when trigger is reached
          if(currentPrice >= triggerPrice && newSL > currentSL)
@@ -422,14 +626,88 @@ void ManagePositions(int dayOfWeek)
       else if(posType == POSITION_TYPE_SELL)
       {
          double targetDistance = positionOpenPrice - currentTP;
-         double triggerPrice = positionOpenPrice - (targetDistance * triggerPercent / 100.0);
-         double newSL = positionOpenPrice - (orbRange * targetPercent / 100.0);
+         double triggerPrice = NormalizeDouble(positionOpenPrice - (targetDistance * triggerPercent / 100.0), _Digits);
+         double newSL = NormalizeDouble(positionOpenPrice - (orbRange * targetPercent / 100.0), _Digits);
          
          // Move stop to lock in profit when trigger is reached
          if(currentPrice <= triggerPrice && (currentSL == 0 || newSL < currentSL))
          {
             ModifyPosition(ticket, newSL, currentTP);
             Print("Trailing stop activated for SELL position. New SL: ", newSL);
+         }
+      }
+   }
+}
+
+//+------------------------------------------------------------------+
+//| Check virtual TP/SL on each tick                                 |
+//+------------------------------------------------------------------+
+void CheckVirtualTPSL(int dayOfWeek)
+{
+   for(int i = ArraySize(virtualPositions) - 1; i >= 0; i--)
+   {
+      ulong ticket = virtualPositions[i].ticket;
+      
+      if(!PositionSelectByTicket(ticket))
+      {
+         // Position closed, remove from array
+         ArrayRemove(virtualPositions, i, 1);
+         continue;
+      }
+      
+      ENUM_POSITION_TYPE posType = (ENUM_POSITION_TYPE)PositionGetInteger(POSITION_TYPE);
+      double currentPrice = (posType == POSITION_TYPE_BUY) ? SymbolInfoDouble(_Symbol, SYMBOL_BID) : SymbolInfoDouble(_Symbol, SYMBOL_ASK);
+      double openPrice = PositionGetDouble(POSITION_PRICE_OPEN);
+      
+      // Check virtual TP
+      if((posType == POSITION_TYPE_BUY && currentPrice >= virtualPositions[i].virtualTP) ||
+         (posType == POSITION_TYPE_SELL && currentPrice <= virtualPositions[i].virtualTP))
+      {
+         Print("Virtual TP hit at ", currentPrice);
+         ClosePosition(ticket);
+         ArrayRemove(virtualPositions, i, 1);
+         continue;
+      }
+      
+      // Check virtual SL
+      if((posType == POSITION_TYPE_BUY && currentPrice <= virtualPositions[i].virtualSL) ||
+         (posType == POSITION_TYPE_SELL && currentPrice >= virtualPositions[i].virtualSL))
+      {
+         Print("Virtual SL hit at ", currentPrice);
+         ClosePosition(ticket);
+         ArrayRemove(virtualPositions, i, 1);
+         continue;
+      }
+      
+      // Check trailing stop trigger
+      if(!virtualPositions[i].trailingActivated && virtualPositions[i].triggerPrice > 0)
+      {
+         bool triggerHit = false;
+         
+         if(posType == POSITION_TYPE_BUY && currentPrice >= virtualPositions[i].triggerPrice)
+            triggerHit = true;
+         else if(posType == POSITION_TYPE_SELL && currentPrice <= virtualPositions[i].triggerPrice)
+            triggerHit = true;
+         
+         if(triggerHit)
+         {
+            // Get target percent for this day
+            double targetPercent = 20.0;
+            switch(dayOfWeek)
+            {
+               case 1: targetPercent = Monday_TargetPercent; break;
+               case 2: targetPercent = Tuesday_TargetPercent; break;
+               case 3: targetPercent = Wednesday_TargetPercent; break;
+               case 4: targetPercent = Thursday_TargetPercent; break;
+               case 5: targetPercent = Friday_TargetPercent; break;
+            }
+            
+            double orbRange = orbHigh - orbLow;
+            double newSL = NormalizeDouble(openPrice + (posType == POSITION_TYPE_BUY ? 1 : -1) * (orbRange * targetPercent / 100.0), _Digits);
+            
+            virtualPositions[i].virtualSL = newSL;
+            virtualPositions[i].trailingActivated = true;
+            Print("Virtual trailing stop activated. New SL: ", newSL);
          }
       }
    }
@@ -445,8 +723,8 @@ bool ModifyPosition(ulong ticket, double sl, double tp)
    
    request.action = TRADE_ACTION_SLTP;
    request.position = ticket;
-   request.sl = sl;
-   request.tp = tp;
+   request.sl = NormalizeDouble(sl, _Digits);
+   request.tp = NormalizeDouble(tp, _Digits);
    
    if(OrderSend(request, result))
    {
@@ -473,13 +751,15 @@ void CheckSessionClose()
    datetime sessionClose = StringToTime(IntegerToString(timeStruct.year) + "." + 
                                         IntegerToString(timeStruct.mon) + "." + 
                                         IntegerToString(timeStruct.day) + " " +
-                                        IntegerToString(SessionCloseHour) + ":" + 
-                                        IntegerToString(SessionCloseMinute));
+                                        IntegerToString(SessionEndHour) + ":" + 
+                                        IntegerToString(SessionEndMinute));
    
    // Close all positions at session close
    if(TimeCurrent() >= sessionClose)
    {
       int closedCount = 0;
+      
+      // Close all open positions
       for(int i = PositionsTotal() - 1; i >= 0; i--)
       {
          ulong ticket = PositionGetTicket(i);
@@ -492,6 +772,12 @@ void CheckSessionClose()
          {
             closedCount++;
          }
+      }
+      
+      // Clear virtual positions array
+      if(UseVirtualTPSL)
+      {
+         ArrayResize(virtualPositions, 0);
       }
       
       if(closedCount > 0)
@@ -508,21 +794,61 @@ void CheckSessionClose()
 //+------------------------------------------------------------------+
 bool ClosePosition(ulong ticket)
 {
+   // Check if position still exists
+   if(!PositionSelectByTicket(ticket)) return false;
+   
+   // Verify it's our position
+   if(PositionGetInteger(POSITION_MAGIC) != 123456) return false;
+   if(PositionGetString(POSITION_SYMBOL) != _Symbol) return false;
+   
    MqlTradeRequest request = {};
    MqlTradeResult result = {};
-   
-   if(!PositionSelectByTicket(ticket)) return false;
    
    request.action = TRADE_ACTION_DEAL;
    request.position = ticket;
    request.symbol = PositionGetString(POSITION_SYMBOL);
-   request.volume = PositionGetDouble(POSITION_VOLUME);
+   request.volume = NormalizeDouble(PositionGetDouble(POSITION_VOLUME), 2);
    request.type = (PositionGetInteger(POSITION_TYPE) == POSITION_TYPE_BUY) ? ORDER_TYPE_SELL : ORDER_TYPE_BUY;
-   request.price = (request.type == ORDER_TYPE_SELL) ? SymbolInfoDouble(request.symbol, SYMBOL_BID) : SymbolInfoDouble(request.symbol, SYMBOL_ASK);
+   request.price = NormalizeDouble((request.type == ORDER_TYPE_SELL) ? SymbolInfoDouble(request.symbol, SYMBOL_BID) : SymbolInfoDouble(request.symbol, SYMBOL_ASK), _Digits);
    request.deviation = 10;
    request.magic = 123456;
    
-   if(OrderSend(request, result))
+   // Determine supported filling mode
+   int filling = (int)SymbolInfoInteger(request.symbol, SYMBOL_FILLING_MODE);
+   
+   if((filling & SYMBOL_FILLING_IOC) == SYMBOL_FILLING_IOC)
+      request.type_filling = ORDER_FILLING_IOC;
+   else if((filling & SYMBOL_FILLING_FOK) == SYMBOL_FILLING_FOK)
+      request.type_filling = ORDER_FILLING_FOK;
+   else
+      request.type_filling = ORDER_FILLING_RETURN;
+   
+   // Send order
+   bool success = OrderSend(request, result);
+   
+   // If filling mode error, try alternatives
+   if(!success && result.retcode == 10030)
+   {
+      if(request.type_filling != ORDER_FILLING_IOC && (filling & SYMBOL_FILLING_IOC) == SYMBOL_FILLING_IOC)
+      {
+         request.type_filling = ORDER_FILLING_IOC;
+         success = OrderSend(request, result);
+      }
+      
+      if(!success && request.type_filling != ORDER_FILLING_FOK && (filling & SYMBOL_FILLING_FOK) == SYMBOL_FILLING_FOK)
+      {
+         request.type_filling = ORDER_FILLING_FOK;
+         success = OrderSend(request, result);
+      }
+      
+      if(!success && request.type_filling != ORDER_FILLING_RETURN)
+      {
+         request.type_filling = ORDER_FILLING_RETURN;
+         success = OrderSend(request, result);
+      }
+   }
+   
+   if(result.retcode == 10009 || result.retcode == 10008)
    {
       Print("Position closed at session close: ", ticket);
       return true;

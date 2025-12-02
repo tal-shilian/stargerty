@@ -1,0 +1,669 @@
+//+------------------------------------------------------------------+
+//|                                                      orbtp3.mql5 |
+//|                        ORB Strategy with Move Stop               |
+//+------------------------------------------------------------------+
+#property copyright "ORB Strategy"
+#property version   "1.00"
+#property strict
+
+#include <Trade\Trade.mqh>
+
+//--- Input Parameters
+input group "=== General Settings ==="
+input double InpMaxLoss = 1000.0;                // Max Loss $
+input double InpLotSize = 0.1;                   // Lot Size
+
+input group "=== ORB Time Settings ==="
+input int InpORBStartHour = 9;                   // ORB Start Hour
+input int InpORBStartMinute = 30;                // ORB Start Minute
+input int InpORBEndHour = 9;                     // ORB End Hour
+input int InpORBEndMinute = 45;                  // ORB End Minute
+
+input group "=== Session Time Settings ==="
+input int InpSessionStartHour = 9;               // Session Start Hour
+input int InpSessionStartMinute = 30;            // Session Start Minute
+input int InpSessionEndHour = 16;                // Session End Hour
+input int InpSessionEndMinute = 0;               // Session End Minute
+
+input group "=== MONDAY ==="
+input bool InpTradeMonday = true;                // Trade on Monday
+input bool InpMondayBreakout = true;             // Trade ORB breakout
+input bool InpMondayBreakdown = true;            // Trade ORB breakdown
+input double InpMondayProfitTarget = 50.0;       // Profit target (% of ORB size)
+input double InpMondayStopLoss = 100.0;          // Stop loss (% of ORB size)
+input double InpMondayMinORBSize = 0.0;          // Min ORB size %
+input double InpMondayMaxORBSize = 0.5;          // Max ORB size %
+input bool InpMondayActivateMoveStop = true;     // Activate Move Stop?
+input double InpMondayTriggerPercent = 85.0;     // Trigger %
+input double InpMondayTargetPercent = 20.0;      // Target %
+
+input group "=== TUESDAY ==="
+input bool InpTradeTuesday = true;               // Trade on Tuesday
+input bool InpTuesdayBreakout = true;            // Trade ORB breakout
+input bool InpTuesdayBreakdown = true;           // Trade ORB breakdown
+input double InpTuesdayProfitTarget = 50.0;      // Profit target (% of ORB size)
+input double InpTuesdayStopLoss = 100.0;         // Stop loss (% of ORB size)
+input double InpTuesdayMinORBSize = 0.0;         // Min ORB size %
+input double InpTuesdayMaxORBSize = 0.5;         // Max ORB size %
+input bool InpTuesdayActivateMoveStop = true;    // Activate Move Stop?
+input double InpTuesdayTriggerPercent = 85.0;    // Trigger %
+input double InpTuesdayTargetPercent = 20.0;     // Target %
+
+input group "=== WEDNESDAY ==="
+input bool InpTradeWednesday = true;             // Trade on Wednesday
+input bool InpWednesdayBreakout = true;          // Trade ORB breakout
+input bool InpWednesdayBreakdown = true;         // Trade ORB breakdown
+input double InpWednesdayProfitTarget = 50.0;    // Profit target (% of ORB size)
+input double InpWednesdayStopLoss = 100.0;       // Stop loss (% of ORB size)
+input double InpWednesdayMinORBSize = 0.0;       // Min ORB size %
+input double InpWednesdayMaxORBSize = 0.5;       // Max ORB size %
+input bool InpWednesdayActivateMoveStop = true;  // Activate Move Stop?
+input double InpWednesdayTriggerPercent = 85.0;  // Trigger %
+input double InpWednesdayTargetPercent = 20.0;   // Target %
+
+input group "=== THURSDAY ==="
+input bool InpTradeThursday = true;              // Trade on Thursday
+input bool InpThursdayBreakout = true;           // Trade ORB breakout
+input bool InpThursdayBreakdown = true;          // Trade ORB breakdown
+input double InpThursdayProfitTarget = 50.0;     // Profit target (% of ORB size)
+input double InpThursdayStopLoss = 100.0;        // Stop loss (% of ORB size)
+input double InpThursdayMinORBSize = 0.0;        // Min ORB size %
+input double InpThursdayMaxORBSize = 0.5;        // Max ORB size %
+input bool InpThursdayActivateMoveStop = true;   // Activate Move Stop?
+input double InpThursdayTriggerPercent = 85.0;   // Trigger %
+input double InpThursdayTargetPercent = 20.0;    // Target %
+
+input group "=== FRIDAY ==="
+input bool InpTradeFriday = true;                // Trade on Friday
+input bool InpFridayBreakout = true;             // Trade ORB breakout
+input bool InpFridayBreakdown = true;            // Trade ORB breakdown
+input double InpFridayProfitTarget = 50.0;       // Profit target (% of ORB size)
+input double InpFridayStopLoss = 100.0;          // Stop loss (% of ORB size)
+input double InpFridayMinORBSize = 0.0;          // Min ORB size %
+input double InpFridayMaxORBSize = 0.5;          // Max ORB size %
+input bool InpFridayActivateMoveStop = true;     // Activate Move Stop?
+input double InpFridayTriggerPercent = 85.0;     // Trigger %
+input double InpFridayTargetPercent = 20.0;      // Target %
+
+//--- Global Variables
+CTrade trade;
+double orbHigh = 0;
+double orbLow = 0;
+bool orbCalculated = false;
+datetime orbStartTime = 0;
+datetime orbEndTime = 0;
+double dailyProfit = 0;
+datetime lastResetDate = 0;
+bool breakoutTradeOpened = false;
+bool breakdownTradeOpened = false;
+bool sessionClosed = false;
+int lastDealsTotal = 0;
+
+// Message tracking - print each message only once
+bool orbMessagePrinted = false;
+bool maxLossPrinted = false;
+bool lotSizePrinted = false;
+
+// Virtual TP/SL tracking
+struct VirtualTPSL
+{
+   ulong ticket;
+   double virtualTP;
+   double virtualSL;
+   double triggerPrice;
+   double targetSL;
+   bool moveStopTriggered;
+   bool isLong;
+};
+VirtualTPSL virtualPositions[];
+
+//+------------------------------------------------------------------+
+//| Expert initialization function                                   |
+//+------------------------------------------------------------------+
+int OnInit()
+{
+   trade.SetExpertMagicNumber(123456);
+   trade.SetDeviationInPoints(10);
+   trade.SetTypeFilling(ORDER_FILLING_FOK);
+   
+   Print("=== ORB Strategy with Move Stop Initialized ===");
+   Print("Lot Size: ", InpLotSize);
+   Print("Max Loss: $", InpMaxLoss);
+   lotSizePrinted = true;
+   
+   return(INIT_SUCCEEDED);
+}
+
+//+------------------------------------------------------------------+
+//| Expert deinitialization function                                 |
+//+------------------------------------------------------------------+
+void OnDeinit(const int reason)
+{
+   Print("ORB Strategy stopped");
+}
+
+//+------------------------------------------------------------------+
+//| Expert tick function                                             |
+//+------------------------------------------------------------------+
+void OnTick()
+{
+   // Check virtual TP/SL on every tick FIRST
+   CheckVirtualTPSL();
+   
+   MqlDateTime timeStruct;
+   TimeToStruct(TimeCurrent(), timeStruct);
+   datetime currentDate = StringToTime(IntegerToString(timeStruct.year) + "." + 
+                                       IntegerToString(timeStruct.mon) + "." + 
+                                       IntegerToString(timeStruct.day));
+   
+   // Reset daily variables
+   if(currentDate != lastResetDate)
+   {
+      dailyProfit = 0;
+      lastResetDate = currentDate;
+      orbCalculated = false;
+      orbMessagePrinted = false;
+      breakoutTradeOpened = false;
+      breakdownTradeOpened = false;
+      sessionClosed = false;
+      maxLossPrinted = false;
+      lastDealsTotal = 0;
+      ArrayResize(virtualPositions, 0);
+   }
+   
+   // Calculate daily profit
+   CalculateDailyProfit();
+   
+   // Check max loss
+   if(dailyProfit <= -InpMaxLoss)
+   {
+      if(!maxLossPrinted)
+      {
+         Print("Max daily loss reached: $", MathAbs(dailyProfit));
+         maxLossPrinted = true;
+      }
+      return;
+   }
+   
+   // Check session time
+   datetime sessionStart = StringToTime(IntegerToString(timeStruct.year) + "." + 
+                                        IntegerToString(timeStruct.mon) + "." + 
+                                        IntegerToString(timeStruct.day) + " " +
+                                        IntegerToString(InpSessionStartHour) + ":" + 
+                                        IntegerToString(InpSessionStartMinute));
+   
+   datetime sessionEnd = StringToTime(IntegerToString(timeStruct.year) + "." + 
+                                      IntegerToString(timeStruct.mon) + "." + 
+                                      IntegerToString(timeStruct.day) + " " +
+                                      IntegerToString(InpSessionEndHour) + ":" + 
+                                      IntegerToString(InpSessionEndMinute));
+   
+   if(TimeCurrent() < sessionStart || TimeCurrent() > sessionEnd) return;
+   
+   // Check if today is a trading day
+   int dayOfWeek = timeStruct.day_of_week;
+   if(!IsTradingDay(dayOfWeek)) return;
+   
+   // Calculate ORB
+   CalculateORB(dayOfWeek);
+   
+   // Check for trade signals
+   if(orbCalculated && TimeCurrent() > orbEndTime)
+   {
+      CheckTradeSignals(dayOfWeek);
+   }
+   
+   // Check session close
+   CheckSessionClose();
+}
+
+//+------------------------------------------------------------------+
+//| Calculate daily profit from closed deals                         |
+//+------------------------------------------------------------------+
+void CalculateDailyProfit()
+{
+   int currentDealsTotal = HistoryDealsTotal();
+   if(currentDealsTotal == lastDealsTotal) return;
+   
+   MqlDateTime timeStruct;
+   TimeToStruct(TimeCurrent(), timeStruct);
+   datetime dayStart = StringToTime(IntegerToString(timeStruct.year) + "." + 
+                                    IntegerToString(timeStruct.mon) + "." + 
+                                    IntegerToString(timeStruct.day) + " 00:00");
+   
+   HistorySelect(dayStart, TimeCurrent());
+   
+   dailyProfit = 0;
+   for(int i = 0; i < HistoryDealsTotal(); i++)
+   {
+      ulong ticket = HistoryDealGetTicket(i);
+      if(ticket > 0)
+      {
+         if(HistoryDealGetInteger(ticket, DEAL_MAGIC) == 123456 &&
+            HistoryDealGetString(ticket, DEAL_SYMBOL) == _Symbol &&
+            HistoryDealGetInteger(ticket, DEAL_ENTRY) == DEAL_ENTRY_OUT)
+         {
+            dailyProfit += HistoryDealGetDouble(ticket, DEAL_PROFIT);
+            dailyProfit += HistoryDealGetDouble(ticket, DEAL_SWAP);
+            dailyProfit += HistoryDealGetDouble(ticket, DEAL_COMMISSION);
+         }
+      }
+   }
+   
+   lastDealsTotal = currentDealsTotal;
+}
+
+//+------------------------------------------------------------------+
+//| Calculate Opening Range                                          |
+//+------------------------------------------------------------------+
+void CalculateORB(int dayOfWeek)
+{
+   MqlDateTime timeStruct;
+   TimeToStruct(TimeCurrent(), timeStruct);
+   
+   datetime orbStart = StringToTime(IntegerToString(timeStruct.year) + "." + 
+                                    IntegerToString(timeStruct.mon) + "." + 
+                                    IntegerToString(timeStruct.day) + " " +
+                                    IntegerToString(InpORBStartHour) + ":" + 
+                                    IntegerToString(InpORBStartMinute));
+   
+   datetime orbEnd = StringToTime(IntegerToString(timeStruct.year) + "." + 
+                                  IntegerToString(timeStruct.mon) + "." + 
+                                  IntegerToString(timeStruct.day) + " " +
+                                  IntegerToString(InpORBEndHour) + ":" + 
+                                  IntegerToString(InpORBEndMinute));
+   
+   if(orbStartTime != orbStart)
+   {
+      orbStartTime = orbStart;
+      orbEndTime = orbEnd;
+      orbCalculated = false;
+      orbMessagePrinted = false;
+      orbHigh = 0;
+      orbLow = 0;
+   }
+   
+   // During ORB period
+   if(TimeCurrent() >= orbStartTime && TimeCurrent() <= orbEndTime)
+   {
+      double high = iHigh(_Symbol, PERIOD_CURRENT, 0);
+      double low = iLow(_Symbol, PERIOD_CURRENT, 0);
+      
+      if(orbHigh == 0 || high > orbHigh) orbHigh = high;
+      if(orbLow == 0 || low < orbLow) orbLow = low;
+   }
+   
+   // After ORB period
+   if(TimeCurrent() > orbEndTime && !orbCalculated && orbHigh > 0 && orbLow > 0)
+   {
+      double orbSize = (orbHigh - orbLow) / orbLow * 100.0;
+      double minSize = GetMinORBSize(dayOfWeek);
+      double maxSize = GetMaxORBSize(dayOfWeek);
+      
+      if(orbSize >= minSize && orbSize <= maxSize)
+      {
+         orbCalculated = true;
+         if(!orbMessagePrinted)
+         {
+            Print("ORB calculated - High: ", orbHigh, " Low: ", orbLow, " Size: ", DoubleToString(orbSize, 3), "%");
+            orbMessagePrinted = true;
+         }
+      }
+      else
+      {
+         if(!orbMessagePrinted)
+         {
+            Print("ORB size out of range: ", DoubleToString(orbSize, 3), "% (min: ", minSize, "%, max: ", maxSize, "%)");
+            orbMessagePrinted = true;
+         }
+      }
+   }
+}
+
+//+------------------------------------------------------------------+
+//| Check for trade signals                                          |
+//+------------------------------------------------------------------+
+void CheckTradeSignals(int dayOfWeek)
+{
+   if(PositionsTotal() > 0) return;
+   
+   double currentPrice = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+   double orbRange = orbHigh - orbLow;
+   
+   bool tradeBreakout = GetBreakoutSetting(dayOfWeek);
+   bool tradeBreakdown = GetBreakdownSetting(dayOfWeek);
+   double profitTarget = GetProfitTarget(dayOfWeek);
+   double stopLoss = GetStopLoss(dayOfWeek);
+   
+   // Check for breakout (buy signal)
+   if(tradeBreakout && !breakoutTradeOpened && currentPrice > orbHigh)
+   {
+      double tp = NormalizeDouble(orbHigh + (orbRange * profitTarget / 100.0), _Digits);
+      double sl = NormalizeDouble(orbHigh - (orbRange * stopLoss / 100.0), _Digits);
+      
+      ulong ticket = OpenTrade(ORDER_TYPE_BUY, sl, tp, dayOfWeek);
+      if(ticket > 0)
+      {
+         breakoutTradeOpened = true;
+         Print("Long trade opened - Lot Size: ", InpLotSize, " Entry: ", SymbolInfoDouble(_Symbol, SYMBOL_ASK), " SL: ", sl, " TP: ", tp);
+      }
+   }
+   
+   // Check for breakdown (sell signal)
+   if(tradeBreakdown && !breakdownTradeOpened && currentPrice < orbLow)
+   {
+      double tp = NormalizeDouble(orbLow - (orbRange * profitTarget / 100.0), _Digits);
+      double sl = NormalizeDouble(orbLow + (orbRange * stopLoss / 100.0), _Digits);
+      
+      ulong ticket = OpenTrade(ORDER_TYPE_SELL, sl, tp, dayOfWeek);
+      if(ticket > 0)
+      {
+         breakdownTradeOpened = true;
+         Print("Short trade opened - Lot Size: ", InpLotSize, " Entry: ", SymbolInfoDouble(_Symbol, SYMBOL_BID), " SL: ", sl, " TP: ", tp);
+      }
+   }
+}
+
+//+------------------------------------------------------------------+
+//| Open a trade                                                     |
+//+------------------------------------------------------------------+
+ulong OpenTrade(ENUM_ORDER_TYPE orderType, double sl, double tp, int dayOfWeek)
+{
+   MqlTradeRequest request = {};
+   MqlTradeResult result = {};
+   
+   request.action = TRADE_ACTION_DEAL;
+   request.symbol = _Symbol;
+   request.volume = NormalizeDouble(InpLotSize, 2);
+   request.type = orderType;
+   request.price = NormalizeDouble((orderType == ORDER_TYPE_BUY) ? SymbolInfoDouble(_Symbol, SYMBOL_ASK) : SymbolInfoDouble(_Symbol, SYMBOL_BID), _Digits);
+   request.sl = 0;  // No broker SL
+   request.tp = 0;  // No broker TP
+   request.deviation = 10;
+   request.magic = 123456;
+   request.comment = "ORB Strategy";
+   
+   int filling = (int)SymbolInfoInteger(_Symbol, SYMBOL_FILLING_MODE);
+   if((filling & SYMBOL_FILLING_IOC) == SYMBOL_FILLING_IOC)
+      request.type_filling = ORDER_FILLING_IOC;
+   else if((filling & SYMBOL_FILLING_FOK) == SYMBOL_FILLING_FOK)
+      request.type_filling = ORDER_FILLING_FOK;
+   else
+      request.type_filling = ORDER_FILLING_RETURN;
+   
+   bool success = OrderSend(request, result);
+   
+   if(result.retcode == 10009 || result.retcode == 10008)
+   {
+      // Find the opened position and add virtual TP/SL
+      for(int i = 0; i < PositionsTotal(); i++)
+      {
+         ulong ticket = PositionGetTicket(i);
+         if(PositionGetInteger(POSITION_MAGIC) == 123456 && PositionGetString(POSITION_SYMBOL) == _Symbol)
+         {
+            double openPrice = PositionGetDouble(POSITION_PRICE_OPEN);
+            bool activateMoveStop = GetActivateMoveStop(dayOfWeek);
+            
+            int size = ArraySize(virtualPositions);
+            ArrayResize(virtualPositions, size + 1);
+            virtualPositions[size].ticket = ticket;
+            virtualPositions[size].virtualTP = NormalizeDouble(tp, _Digits);
+            virtualPositions[size].virtualSL = NormalizeDouble(sl, _Digits);
+            virtualPositions[size].moveStopTriggered = false;
+            virtualPositions[size].isLong = (orderType == ORDER_TYPE_BUY);
+            
+            if(activateMoveStop)
+            {
+               double triggerPercent = GetTriggerPercent(dayOfWeek);
+               double targetPercent = GetTargetPercent(dayOfWeek);
+               double orbRange = orbHigh - orbLow;
+               
+               double targetDistance = MathAbs(tp - openPrice);
+               virtualPositions[size].triggerPrice = openPrice + (orderType == ORDER_TYPE_BUY ? 1 : -1) * (targetDistance * triggerPercent / 100.0);
+               virtualPositions[size].targetSL = openPrice + (orderType == ORDER_TYPE_BUY ? 1 : -1) * (orbRange * targetPercent / 100.0);
+            }
+            else
+            {
+               virtualPositions[size].triggerPrice = 0;
+               virtualPositions[size].targetSL = 0;
+            }
+            
+            Print("Virtual TP/SL set - Ticket: ", ticket, " TP: ", tp, " SL: ", sl);
+            break;
+         }
+      }
+      
+      return result.order;
+   }
+   
+   return 0;
+}
+
+//+------------------------------------------------------------------+
+//| Check Virtual TP/SL on every tick                                |
+//+------------------------------------------------------------------+
+void CheckVirtualTPSL()
+{
+   for(int i = ArraySize(virtualPositions) - 1; i >= 0; i--)
+   {
+      ulong ticket = virtualPositions[i].ticket;
+      
+      // Check if position still exists
+      if(!PositionSelectByTicket(ticket))
+      {
+         ArrayRemove(virtualPositions, i, 1);
+         continue;
+      }
+      
+      double currentPrice = virtualPositions[i].isLong ? SymbolInfoDouble(_Symbol, SYMBOL_BID) : SymbolInfoDouble(_Symbol, SYMBOL_ASK);
+      
+      // Check if move stop should be triggered
+      if(!virtualPositions[i].moveStopTriggered && virtualPositions[i].triggerPrice > 0)
+      {
+         bool triggerHit = false;
+         if(virtualPositions[i].isLong && currentPrice >= virtualPositions[i].triggerPrice)
+            triggerHit = true;
+         else if(!virtualPositions[i].isLong && currentPrice <= virtualPositions[i].triggerPrice)
+            triggerHit = true;
+         
+         if(triggerHit)
+         {
+            virtualPositions[i].virtualSL = NormalizeDouble(virtualPositions[i].targetSL, _Digits);
+            virtualPositions[i].moveStopTriggered = true;
+            Print("Move stop activated for ticket #", ticket, " - New Virtual SL: ", virtualPositions[i].virtualSL);
+         }
+      }
+      
+      // Check Virtual TP
+      if((virtualPositions[i].isLong && currentPrice >= virtualPositions[i].virtualTP) ||
+         (!virtualPositions[i].isLong && currentPrice <= virtualPositions[i].virtualTP))
+      {
+         if(trade.PositionClose(ticket))
+         {
+            Print("Virtual TP hit at ", currentPrice, " - Position closed");
+            ArrayRemove(virtualPositions, i, 1);
+         }
+         continue;
+      }
+      
+      // Check Virtual SL
+      if((virtualPositions[i].isLong && currentPrice <= virtualPositions[i].virtualSL) ||
+         (!virtualPositions[i].isLong && currentPrice >= virtualPositions[i].virtualSL))
+      {
+         if(trade.PositionClose(ticket))
+         {
+            Print("Virtual SL hit at ", currentPrice, " - Position closed");
+            ArrayRemove(virtualPositions, i, 1);
+         }
+         continue;
+      }
+   }
+}
+
+//+------------------------------------------------------------------+
+//| Check and close positions at session close                       |
+//+------------------------------------------------------------------+
+void CheckSessionClose()
+{
+   if(sessionClosed) return;
+   
+   MqlDateTime timeStruct;
+   TimeToStruct(TimeCurrent(), timeStruct);
+   
+   datetime sessionEnd = StringToTime(IntegerToString(timeStruct.year) + "." + 
+                                      IntegerToString(timeStruct.mon) + "." + 
+                                      IntegerToString(timeStruct.day) + " " +
+                                      IntegerToString(InpSessionEndHour) + ":" + 
+                                      IntegerToString(InpSessionEndMinute));
+   
+   if(TimeCurrent() >= sessionEnd)
+   {
+      for(int i = PositionsTotal() - 1; i >= 0; i--)
+      {
+         ulong ticket = PositionGetTicket(i);
+         if(ticket <= 0) continue;
+         
+         if(PositionGetString(POSITION_SYMBOL) != _Symbol) continue;
+         if(PositionGetInteger(POSITION_MAGIC) != 123456) continue;
+         
+         trade.PositionClose(ticket);
+      }
+      
+      sessionClosed = true;
+      Print("Session closed - All positions closed");
+   }
+}
+
+//+------------------------------------------------------------------+
+//| Helper Functions - Day Settings                                  |
+//+------------------------------------------------------------------+
+bool IsTradingDay(int dayOfWeek)
+{
+   switch(dayOfWeek)
+   {
+      case 1: return InpTradeMonday;
+      case 2: return InpTradeTuesday;
+      case 3: return InpTradeWednesday;
+      case 4: return InpTradeThursday;
+      case 5: return InpTradeFriday;
+      default: return false;
+   }
+}
+
+bool GetBreakoutSetting(int dayOfWeek)
+{
+   switch(dayOfWeek)
+   {
+      case 1: return InpMondayBreakout;
+      case 2: return InpTuesdayBreakout;
+      case 3: return InpWednesdayBreakout;
+      case 4: return InpThursdayBreakout;
+      case 5: return InpFridayBreakout;
+      default: return false;
+   }
+}
+
+bool GetBreakdownSetting(int dayOfWeek)
+{
+   switch(dayOfWeek)
+   {
+      case 1: return InpMondayBreakdown;
+      case 2: return InpTuesdayBreakdown;
+      case 3: return InpWednesdayBreakdown;
+      case 4: return InpThursdayBreakdown;
+      case 5: return InpFridayBreakdown;
+      default: return false;
+   }
+}
+
+double GetProfitTarget(int dayOfWeek)
+{
+   switch(dayOfWeek)
+   {
+      case 1: return InpMondayProfitTarget;
+      case 2: return InpTuesdayProfitTarget;
+      case 3: return InpWednesdayProfitTarget;
+      case 4: return InpThursdayProfitTarget;
+      case 5: return InpFridayProfitTarget;
+      default: return 50.0;
+   }
+}
+
+double GetStopLoss(int dayOfWeek)
+{
+   switch(dayOfWeek)
+   {
+      case 1: return InpMondayStopLoss;
+      case 2: return InpTuesdayStopLoss;
+      case 3: return InpWednesdayStopLoss;
+      case 4: return InpThursdayStopLoss;
+      case 5: return InpFridayStopLoss;
+      default: return 100.0;
+   }
+}
+
+double GetMinORBSize(int dayOfWeek)
+{
+   switch(dayOfWeek)
+   {
+      case 1: return InpMondayMinORBSize;
+      case 2: return InpTuesdayMinORBSize;
+      case 3: return InpWednesdayMinORBSize;
+      case 4: return InpThursdayMinORBSize;
+      case 5: return InpFridayMinORBSize;
+      default: return 0.0;
+   }
+}
+
+double GetMaxORBSize(int dayOfWeek)
+{
+   switch(dayOfWeek)
+   {
+      case 1: return InpMondayMaxORBSize;
+      case 2: return InpTuesdayMaxORBSize;
+      case 3: return InpWednesdayMaxORBSize;
+      case 4: return InpThursdayMaxORBSize;
+      case 5: return InpFridayMaxORBSize;
+      default: return 0.5;
+   }
+}
+
+bool GetActivateMoveStop(int dayOfWeek)
+{
+   switch(dayOfWeek)
+   {
+      case 1: return InpMondayActivateMoveStop;
+      case 2: return InpTuesdayActivateMoveStop;
+      case 3: return InpWednesdayActivateMoveStop;
+      case 4: return InpThursdayActivateMoveStop;
+      case 5: return InpFridayActivateMoveStop;
+      default: return false;
+   }
+}
+
+double GetTriggerPercent(int dayOfWeek)
+{
+   switch(dayOfWeek)
+   {
+      case 1: return InpMondayTriggerPercent;
+      case 2: return InpTuesdayTriggerPercent;
+      case 3: return InpWednesdayTriggerPercent;
+      case 4: return InpThursdayTriggerPercent;
+      case 5: return InpFridayTriggerPercent;
+      default: return 85.0;
+   }
+}
+
+double GetTargetPercent(int dayOfWeek)
+{
+   switch(dayOfWeek)
+   {
+      case 1: return InpMondayTargetPercent;
+      case 2: return InpTuesdayTargetPercent;
+      case 3: return InpWednesdayTargetPercent;
+      case 4: return InpThursdayTargetPercent;
+      case 5: return InpFridayTargetPercent;
+      default: return 20.0;
+   }
+}
+//+------------------------------------------------------------------+
