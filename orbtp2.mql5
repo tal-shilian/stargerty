@@ -1,0 +1,536 @@
+//+------------------------------------------------------------------+
+//|                                                      orbtp2.mq5  |
+//|                        ORB Strategy with Trailing Stop           |
+//+------------------------------------------------------------------+
+#property copyright "ORB Strategy"
+#property version   "1.00"
+#property strict
+
+input group "=== General Settings ==="
+input double MaxLoss = 900.0;                    // Max Loss $
+input double LotSize = 0.1;                      // Lot Size
+
+input group "=== Monday Settings ==="
+input bool TradeOnMonday = true;                 // Trade on Monday
+input bool Monday_TradeBreakout = true;          // Trade ORB breakout
+input bool Monday_TradeBreakdown = true;         // Trade ORB breakdown
+input double Monday_ProfitTarget = 50.0;         // Profit target (% of ORB size)
+input double Monday_StopLoss = 100.0;            // Stop loss (% of ORB size)
+input double Monday_MinORBSize = 0.0;            // Min ORB size %
+input double Monday_MaxORBSize = 0.5;            // Max ORB size %
+input bool Monday_ActivateMoveStop = true;       // Activate Move Stop?
+input double Monday_TriggerPercent = 85.0;       // Trigger %
+input double Monday_TargetPercent = 20.0;        // Target %
+
+input group "=== Tuesday Settings ==="
+input bool TradeOnTuesday = true;                // Trade on Tuesday
+input bool Tuesday_TradeBreakout = true;         // Trade ORB breakout
+input bool Tuesday_TradeBreakdown = true;        // Trade ORB breakdown
+input double Tuesday_ProfitTarget = 50.0;        // Profit target (% of ORB size)
+input double Tuesday_StopLoss = 100.0;           // Stop loss (% of ORB size)
+input double Tuesday_MinORBSize = 0.0;           // Min ORB size %
+input double Tuesday_MaxORBSize = 0.5;           // Max ORB size %
+input bool Tuesday_ActivateMoveStop = true;      // Activate Move Stop?
+input double Tuesday_TriggerPercent = 85.0;      // Trigger %
+input double Tuesday_TargetPercent = 20.0;       // Target %
+
+input group "=== Wednesday Settings ==="
+input bool TradeOnWednesday = true;              // Trade on Wednesday
+input bool Wednesday_TradeBreakout = true;       // Trade ORB breakout
+input bool Wednesday_TradeBreakdown = true;      // Trade ORB breakdown
+input double Wednesday_ProfitTarget = 50.0;      // Profit target (% of ORB size)
+input double Wednesday_StopLoss = 100.0;         // Stop loss (% of ORB size)
+input double Wednesday_MinORBSize = 0.0;         // Min ORB size %
+input double Wednesday_MaxORBSize = 0.5;         // Max ORB size %
+input bool Wednesday_ActivateMoveStop = true;    // Activate Move Stop?
+input double Wednesday_TriggerPercent = 85.0;    // Trigger %
+input double Wednesday_TargetPercent = 20.0;     // Target %
+
+input group "=== Thursday Settings ==="
+input bool TradeOnThursday = true;               // Trade on Thursday
+input bool Thursday_TradeBreakout = true;        // Trade ORB breakout
+input bool Thursday_TradeBreakdown = true;       // Trade ORB breakdown
+input double Thursday_ProfitTarget = 50.0;       // Profit target (% of ORB size)
+input double Thursday_StopLoss = 100.0;          // Stop loss (% of ORB size)
+input double Thursday_MinORBSize = 0.0;          // Min ORB size %
+input double Thursday_MaxORBSize = 0.5;          // Max ORB size %
+input bool Thursday_ActivateMoveStop = true;     // Activate Move Stop?
+input double Thursday_TriggerPercent = 85.0;     // Trigger %
+input double Thursday_TargetPercent = 20.0;      // Target %
+
+input group "=== Friday Settings ==="
+input bool TradeOnFriday = true;                 // Trade on Friday
+input bool Friday_TradeBreakout = true;          // Trade ORB breakout
+input bool Friday_TradeBreakdown = true;         // Trade ORB breakdown
+input double Friday_ProfitTarget = 50.0;         // Profit target (% of ORB size)
+input double Friday_StopLoss = 100.0;            // Stop loss (% of ORB size)
+input double Friday_MinORBSize = 0.0;            // Min ORB size %
+input double Friday_MaxORBSize = 0.5;            // Max ORB size %
+input bool Friday_ActivateMoveStop = true;       // Activate Move Stop?
+input double Friday_TriggerPercent = 85.0;       // Trigger %
+input double Friday_TargetPercent = 20.0;        // Target %
+
+input group "=== ORB Time Settings ==="
+input int ORB_StartHour = 9;                     // ORB Start Hour
+input int ORB_StartMinute = 30;                  // ORB Start Minute
+input int ORB_DurationMinutes = 60;              // ORB Duration (minutes)
+input int SessionCloseHour = 16;                 // Session Close Hour
+input int SessionCloseMinute = 30;               // Session Close Minute
+input int GMTOffset = 0;                         // GMT Offset (broker time)
+
+// Global variables
+double orbHigh = 0, orbLow = 0;
+bool orbCalculated = false;
+datetime orbStartTime = 0;
+datetime orbEndTime = 0;
+double dailyLoss = 0;
+datetime lastResetDate = 0;
+bool breakoutTradeOpened = false;
+bool breakdownTradeOpened = false;
+bool sessionClosed = false;
+
+//+------------------------------------------------------------------+
+//| Expert initialization function                                   |
+//+------------------------------------------------------------------+
+int OnInit()
+{
+   Print("ORB Strategy with Trailing Stop initialized");
+   return(INIT_SUCCEEDED);
+}
+
+//+------------------------------------------------------------------+
+//| Expert deinitialization function                                 |
+//+------------------------------------------------------------------+
+void OnDeinit(const int reason)
+{
+   Print("ORB Strategy stopped");
+}
+
+//+------------------------------------------------------------------+
+//| Expert tick function                                             |
+//+------------------------------------------------------------------+
+void OnTick()
+{
+   // Reset daily loss counter
+   MqlDateTime timeStruct;
+   TimeToStruct(TimeCurrent(), timeStruct);
+   datetime currentDate = StringToTime(IntegerToString(timeStruct.year) + "." + 
+                                       IntegerToString(timeStruct.mon) + "." + 
+                                       IntegerToString(timeStruct.day));
+   
+   if(currentDate != lastResetDate)
+   {
+      dailyLoss = 0;
+      lastResetDate = currentDate;
+      orbCalculated = false;
+      breakoutTradeOpened = false;
+      breakdownTradeOpened = false;
+      sessionClosed = false;
+   }
+   
+   // Check max loss
+   if(dailyLoss >= MaxLoss)
+   {
+      Print("Max daily loss reached: $", dailyLoss);
+      return;
+   }
+   
+   // Check if today is a trading day
+   int dayOfWeek = timeStruct.day_of_week;
+   bool shouldTrade = false;
+   
+   if(dayOfWeek == 1 && TradeOnMonday) shouldTrade = true;
+   if(dayOfWeek == 2 && TradeOnTuesday) shouldTrade = true;
+   if(dayOfWeek == 3 && TradeOnWednesday) shouldTrade = true;
+   if(dayOfWeek == 4 && TradeOnThursday) shouldTrade = true;
+   if(dayOfWeek == 5 && TradeOnFriday) shouldTrade = true;
+   
+   if(!shouldTrade) return;
+   
+   // Calculate ORB
+   CalculateORB();
+   
+   // Check for trade signals
+   if(orbCalculated && TimeCurrent() > orbEndTime)
+   {
+      CheckTradeSignals(dayOfWeek);
+   }
+   
+   // Manage open positions
+   ManagePositions(dayOfWeek);
+   
+   // Check session close
+   CheckSessionClose();
+}
+
+//+------------------------------------------------------------------+
+//| Calculate Opening Range                                          |
+//+------------------------------------------------------------------+
+void CalculateORB()
+{
+   MqlDateTime timeStruct;
+   TimeToStruct(TimeCurrent(), timeStruct);
+   
+   // Set ORB start and end times
+   datetime orbStart = StringToTime(IntegerToString(timeStruct.year) + "." + 
+                                    IntegerToString(timeStruct.mon) + "." + 
+                                    IntegerToString(timeStruct.day) + " " +
+                                    IntegerToString(ORB_StartHour) + ":" + 
+                                    IntegerToString(ORB_StartMinute));
+   
+   datetime orbEnd = orbStart + ORB_DurationMinutes * 60;
+   
+   if(orbStartTime != orbStart)
+   {
+      orbStartTime = orbStart;
+      orbEndTime = orbEnd;
+      orbCalculated = false;
+      orbHigh = 0;
+      orbLow = 0;
+   }
+   
+   // During ORB period, track high and low
+   if(TimeCurrent() >= orbStartTime && TimeCurrent() <= orbEndTime)
+   {
+      double high = iHigh(_Symbol, PERIOD_CURRENT, 0);
+      double low = iLow(_Symbol, PERIOD_CURRENT, 0);
+      
+      if(orbHigh == 0 || high > orbHigh) orbHigh = high;
+      if(orbLow == 0 || low < orbLow) orbLow = low;
+   }
+   
+   // After ORB period, validate ORB size
+   if(TimeCurrent() > orbEndTime && !orbCalculated && orbHigh > 0 && orbLow > 0)
+   {
+      double orbSize = (orbHigh - orbLow) / orbLow * 100.0;
+      
+      int dayOfWeek = timeStruct.day_of_week;
+      double minSize = 0.0;
+      double maxSize = 0.5;
+      
+      switch(dayOfWeek)
+      {
+         case 1: minSize = Monday_MinORBSize; maxSize = Monday_MaxORBSize; break;
+         case 2: minSize = Tuesday_MinORBSize; maxSize = Tuesday_MaxORBSize; break;
+         case 3: minSize = Wednesday_MinORBSize; maxSize = Wednesday_MaxORBSize; break;
+         case 4: minSize = Thursday_MinORBSize; maxSize = Thursday_MaxORBSize; break;
+         case 5: minSize = Friday_MinORBSize; maxSize = Friday_MaxORBSize; break;
+         default: return;
+      }
+      
+      if(orbSize >= minSize && orbSize <= maxSize)
+      {
+         orbCalculated = true;
+         Print("ORB calculated - High: ", orbHigh, " Low: ", orbLow, " Size: ", orbSize, "%");
+      }
+      else
+      {
+         Print("ORB size out of range: ", orbSize, "% (min: ", minSize, "%, max: ", maxSize, "%)");
+         orbCalculated = false;
+      }
+   }
+}
+
+//+------------------------------------------------------------------+
+//| Check for trade signals                                          |
+//+------------------------------------------------------------------+
+void CheckTradeSignals(int dayOfWeek)
+{
+   if(PositionsTotal() > 0) return; // Already in a trade
+   
+   double currentPrice = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+   double orbRange = orbHigh - orbLow;
+   
+   // Get day-specific settings
+   bool tradeBreakout = false;
+   bool tradeBreakdown = false;
+   double profitTarget = 50.0;
+   double stopLoss = 100.0;
+   
+   switch(dayOfWeek)
+   {
+      case 1:
+         tradeBreakout = Monday_TradeBreakout;
+         tradeBreakdown = Monday_TradeBreakdown;
+         profitTarget = Monday_ProfitTarget;
+         stopLoss = Monday_StopLoss;
+         break;
+      case 2:
+         tradeBreakout = Tuesday_TradeBreakout;
+         tradeBreakdown = Tuesday_TradeBreakdown;
+         profitTarget = Tuesday_ProfitTarget;
+         stopLoss = Tuesday_StopLoss;
+         break;
+      case 3:
+         tradeBreakout = Wednesday_TradeBreakout;
+         tradeBreakdown = Wednesday_TradeBreakdown;
+         profitTarget = Wednesday_ProfitTarget;
+         stopLoss = Wednesday_StopLoss;
+         break;
+      case 4:
+         tradeBreakout = Thursday_TradeBreakout;
+         tradeBreakdown = Thursday_TradeBreakdown;
+         profitTarget = Thursday_ProfitTarget;
+         stopLoss = Thursday_StopLoss;
+         break;
+      case 5:
+         tradeBreakout = Friday_TradeBreakout;
+         tradeBreakdown = Friday_TradeBreakdown;
+         profitTarget = Friday_ProfitTarget;
+         stopLoss = Friday_StopLoss;
+         break;
+      default:
+         return;
+   }
+   
+   // Check for breakout (buy signal)
+   if(tradeBreakout && !breakoutTradeOpened && currentPrice > orbHigh)
+   {
+      double tp = orbHigh + (orbRange * profitTarget / 100.0);
+      double sl = orbHigh - (orbRange * stopLoss / 100.0);
+      
+      if(OpenTrade(ORDER_TYPE_BUY, orbHigh, sl, tp))
+      {
+         breakoutTradeOpened = true;
+      }
+   }
+   
+   // Check for breakdown (sell signal)
+   if(tradeBreakdown && !breakdownTradeOpened && currentPrice < orbLow)
+   {
+      double tp = orbLow - (orbRange * profitTarget / 100.0);
+      double sl = orbLow + (orbRange * stopLoss / 100.0);
+      
+      if(OpenTrade(ORDER_TYPE_SELL, orbLow, sl, tp))
+      {
+         breakdownTradeOpened = true;
+      }
+   }
+}
+
+//+------------------------------------------------------------------+
+//| Open a trade                                                     |
+//+------------------------------------------------------------------+
+bool OpenTrade(ENUM_ORDER_TYPE orderType, double entry, double sl, double tp)
+{
+   MqlTradeRequest request = {};
+   MqlTradeResult result = {};
+   
+   request.action = TRADE_ACTION_DEAL;
+   request.symbol = _Symbol;
+   request.volume = LotSize;
+   request.type = orderType;
+   request.price = (orderType == ORDER_TYPE_BUY) ? SymbolInfoDouble(_Symbol, SYMBOL_ASK) : SymbolInfoDouble(_Symbol, SYMBOL_BID);
+   request.sl = sl;
+   request.tp = tp;
+   request.deviation = 10;
+   request.magic = 123456;
+   request.comment = "ORB Strategy";
+   
+   if(OrderSend(request, result))
+   {
+      Print("Trade opened: ", EnumToString(orderType), " at ", request.price, " SL: ", sl, " TP: ", tp);
+      return true;
+   }
+   else
+   {
+      Print("Trade failed: ", result.retcode, " - ", result.comment);
+      return false;
+   }
+}
+
+//+------------------------------------------------------------------+
+//| Manage open positions with trailing stop                         |
+//+------------------------------------------------------------------+
+void ManagePositions(int dayOfWeek)
+{
+   for(int i = PositionsTotal() - 1; i >= 0; i--)
+   {
+      ulong ticket = PositionGetTicket(i);
+      if(ticket <= 0) continue;
+      
+      if(PositionGetString(POSITION_SYMBOL) != _Symbol) continue;
+      if(PositionGetInteger(POSITION_MAGIC) != 123456) continue;
+      
+      double positionProfit = PositionGetDouble(POSITION_PROFIT);
+      double positionOpenPrice = PositionGetDouble(POSITION_PRICE_OPEN);
+      double currentSL = PositionGetDouble(POSITION_SL);
+      double currentTP = PositionGetDouble(POSITION_TP);
+      ENUM_POSITION_TYPE posType = (ENUM_POSITION_TYPE)PositionGetInteger(POSITION_TYPE);
+      
+      // Track losses
+      if(positionProfit < 0)
+      {
+         dailyLoss += MathAbs(positionProfit);
+      }
+      
+      // Get day-specific trailing stop settings
+      bool activateMoveStop = false;
+      double triggerPercent = 85.0;
+      double targetPercent = 20.0;
+      
+      switch(dayOfWeek)
+      {
+         case 1:
+            activateMoveStop = Monday_ActivateMoveStop;
+            triggerPercent = Monday_TriggerPercent;
+            targetPercent = Monday_TargetPercent;
+            break;
+         case 2:
+            activateMoveStop = Tuesday_ActivateMoveStop;
+            triggerPercent = Tuesday_TriggerPercent;
+            targetPercent = Tuesday_TargetPercent;
+            break;
+         case 3:
+            activateMoveStop = Wednesday_ActivateMoveStop;
+            triggerPercent = Wednesday_TriggerPercent;
+            targetPercent = Wednesday_TargetPercent;
+            break;
+         case 4:
+            activateMoveStop = Thursday_ActivateMoveStop;
+            triggerPercent = Thursday_TriggerPercent;
+            targetPercent = Thursday_TargetPercent;
+            break;
+         case 5:
+            activateMoveStop = Friday_ActivateMoveStop;
+            triggerPercent = Friday_TriggerPercent;
+            targetPercent = Friday_TargetPercent;
+            break;
+         default:
+            continue;
+      }
+      
+      if(!activateMoveStop) continue;
+      
+      double currentPrice = (posType == POSITION_TYPE_BUY) ? SymbolInfoDouble(_Symbol, SYMBOL_BID) : SymbolInfoDouble(_Symbol, SYMBOL_ASK);
+      double orbRange = orbHigh - orbLow;
+      
+      // Calculate trigger and target levels
+      if(posType == POSITION_TYPE_BUY)
+      {
+         double targetDistance = currentTP - positionOpenPrice;
+         double triggerPrice = positionOpenPrice + (targetDistance * triggerPercent / 100.0);
+         double newSL = positionOpenPrice + (orbRange * targetPercent / 100.0);
+         
+         // Move stop to lock in profit when trigger is reached
+         if(currentPrice >= triggerPrice && newSL > currentSL)
+         {
+            ModifyPosition(ticket, newSL, currentTP);
+            Print("Trailing stop activated for BUY position. New SL: ", newSL);
+         }
+      }
+      else if(posType == POSITION_TYPE_SELL)
+      {
+         double targetDistance = positionOpenPrice - currentTP;
+         double triggerPrice = positionOpenPrice - (targetDistance * triggerPercent / 100.0);
+         double newSL = positionOpenPrice - (orbRange * targetPercent / 100.0);
+         
+         // Move stop to lock in profit when trigger is reached
+         if(currentPrice <= triggerPrice && (currentSL == 0 || newSL < currentSL))
+         {
+            ModifyPosition(ticket, newSL, currentTP);
+            Print("Trailing stop activated for SELL position. New SL: ", newSL);
+         }
+      }
+   }
+}
+
+//+------------------------------------------------------------------+
+//| Modify position SL/TP                                            |
+//+------------------------------------------------------------------+
+bool ModifyPosition(ulong ticket, double sl, double tp)
+{
+   MqlTradeRequest request = {};
+   MqlTradeResult result = {};
+   
+   request.action = TRADE_ACTION_SLTP;
+   request.position = ticket;
+   request.sl = sl;
+   request.tp = tp;
+   
+   if(OrderSend(request, result))
+   {
+      return true;
+   }
+   else
+   {
+      Print("Modify failed: ", result.retcode);
+      return false;
+   }
+}
+
+//+------------------------------------------------------------------+
+//| Check and close positions at session close                       |
+//+------------------------------------------------------------------+
+void CheckSessionClose()
+{
+   if(sessionClosed) return; // Already closed positions today
+   
+   MqlDateTime timeStruct;
+   TimeToStruct(TimeCurrent(), timeStruct);
+   
+   // Calculate session close time
+   datetime sessionClose = StringToTime(IntegerToString(timeStruct.year) + "." + 
+                                        IntegerToString(timeStruct.mon) + "." + 
+                                        IntegerToString(timeStruct.day) + " " +
+                                        IntegerToString(SessionCloseHour) + ":" + 
+                                        IntegerToString(SessionCloseMinute));
+   
+   // Close all positions at session close
+   if(TimeCurrent() >= sessionClose)
+   {
+      int closedCount = 0;
+      for(int i = PositionsTotal() - 1; i >= 0; i--)
+      {
+         ulong ticket = PositionGetTicket(i);
+         if(ticket <= 0) continue;
+         
+         if(PositionGetString(POSITION_SYMBOL) != _Symbol) continue;
+         if(PositionGetInteger(POSITION_MAGIC) != 123456) continue;
+         
+         if(ClosePosition(ticket))
+         {
+            closedCount++;
+         }
+      }
+      
+      if(closedCount > 0)
+      {
+         Print("Session closed - ", closedCount, " position(s) closed at ", TimeToString(TimeCurrent()));
+      }
+      
+      sessionClosed = true;
+   }
+}
+
+//+------------------------------------------------------------------+
+//| Close a position                                                 |
+//+------------------------------------------------------------------+
+bool ClosePosition(ulong ticket)
+{
+   MqlTradeRequest request = {};
+   MqlTradeResult result = {};
+   
+   if(!PositionSelectByTicket(ticket)) return false;
+   
+   request.action = TRADE_ACTION_DEAL;
+   request.position = ticket;
+   request.symbol = PositionGetString(POSITION_SYMBOL);
+   request.volume = PositionGetDouble(POSITION_VOLUME);
+   request.type = (PositionGetInteger(POSITION_TYPE) == POSITION_TYPE_BUY) ? ORDER_TYPE_SELL : ORDER_TYPE_BUY;
+   request.price = (request.type == ORDER_TYPE_SELL) ? SymbolInfoDouble(request.symbol, SYMBOL_BID) : SymbolInfoDouble(request.symbol, SYMBOL_ASK);
+   request.deviation = 10;
+   request.magic = 123456;
+   
+   if(OrderSend(request, result))
+   {
+      Print("Position closed at session close: ", ticket);
+      return true;
+   }
+   else
+   {
+      Print("Close failed: ", result.retcode);
+      return false;
+   }
+}
+//+------------------------------------------------------------------+
