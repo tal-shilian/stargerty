@@ -1,19 +1,15 @@
 {
   "enabled": true,
-  "name": "Prevent Duplicate Log Output",
-  "description": "Ensures that Print() and log statements only execute once to avoid repeated log messages",
+  "name": "Prevent Duplicate Log Statements",
+  "description": "Monitors file edits to detect and prevent duplicate log or print statements from being added to the code",
   "version": "1",
   "when": {
-    "type": "fileEdited",
-    "patterns": [
-      "*.mql5",
-      "*.mql",
-      "*.pine",
-      "*.cs"
-    ]
+    "type": "userTriggered"
   },
   "then": {
     "type": "askAgent",
-    "prompt": "Review any Print() or log statements in the file changes. Ensure they are protected with flags or conditions so the same message doesn't print multiple times during execution. Add static bool flags or other mechanisms to ensure each unique log message only prints once per run."
-  }
+    "prompt": "Review the file changes and check for any duplicate log or print statements. If you find the same log message appearing more than once in the code, suggest removing the duplicates and keeping only one instance of each unique log statement."
+  },
+  "workspaceFolderName": "stargerty",
+  "shortName": "prevent-duplicate-logs"
 }

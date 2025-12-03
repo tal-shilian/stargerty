@@ -4,15 +4,7 @@
   "description": "Monitors file edits and creations to ensure that all numeric values are formatted with no more than two decimal places",
   "version": "1",
   "when": {
-    "type": "fileEdited",
-    "patterns": [
-      "*.mql5",
-      "*.mql",
-      "*.pine",
-      "*.cs",
-      "*.txt",
-      "*.md"
-    ]
+    "type": "userTriggered"
   },
   "then": {
     "type": "askAgent",
